@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>喵都幸存者 · 贴纸风 v3（原图对比 + 动效）</title>
+<style>
+  :root{ --bg:#141320; --card:#1d1d30; --ink:#eeeaf8; --sub:#9a96b8; }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);font-family:"Microsoft YaHei","PingFang SC",sans-serif;padding:26px 20px 60px}
+  h1{font-size:22px;letter-spacing:2px;margin-bottom:6px}
+  .sub{color:var(--sub);font-size:13px;line-height:1.9;max-width:1140px}
+  .sub b{color:#ffb3c7}
+  .board{background:var(--card);border:1px solid #2d2d4a;border-radius:18px;padding:16px;margin-bottom:26px;max-width:1220px}
+  .board-head{display:flex;align-items:center;gap:14px;margin-bottom:12px}
+  .board-head h2{font-size:16px;letter-spacing:1px}
+  .board-head .tag{font-size:12px;color:#0e0e1c;background:#ffd166;border-radius:999px;padding:2px 12px}
+  .board-head .dl{margin-left:auto;font-size:12px;color:#cfcaf0;background:#33335a;border:1px solid #4a4a7a;border-radius:999px;padding:4px 14px;cursor:pointer}
+  canvas.sheet{width:100%;height:auto;display:block;border-radius:12px}
+</style>
+</head>
+<body>
+<h1>🐱 贴纸风 v3 · 左图右图同屏对比 + 动效演示</h1>
+<div class="sub">
+  按参考图实测比例重画：<b>眼径 = 头宽 12~16%</b>（之前只画了 7%）· <b>单耳 = 头宽 30%，内耳填满耳</b>（之前是小揪揪）·
+  <b>头宽扁 1.3:1、头比身体宽</b> · <b>粗卷钩尾巴</b> · 腮红在眼下方外侧 · 奶牛猫带白胸白爪 · 脚下细地线。
+  动效全部用<b>整体变形 + 2 帧姿势交换，7fps 步进</b>，保持贴纸不变形的质感。
+</div>
+<div id="boards"></div>
+<script>
+'use strict';
+/* ================= 画笔 ================= */
+const LINE='#221f2b', LW=4.6;
+function blob(x,pts,fill,line,lw){
+  const n=pts.length;x.beginPath();
+  x.moveTo((pts[0][0]+pts[n-1][0])/2,(pts[0][1]+pts[n-1][1])/2);
+  for(let i=0;i<n;i++){const p=pts[i],q=pts[(i+1)%n];x.quadraticCurveTo(p[0],p[1],(p[0]+q[0])/2,(p[1]+q[1])/2);}
+  x.closePath();
+  if(fill){x.fillStyle=fill;x.fill();}
+  if(line&&lw){x.lineWidth=lw;x.strokeStyle=line;x.lineJoin='round';x.lineCap='round';x.stroke();}
+}
+function ell(x,cx,cy,rx,ry,fill,line,lw){x.beginPath();x.ellipse(cx,cy,rx,ry,0,0,7);if(fill){x.fillStyle=fill;x.fill();}if(line&&lw){x.lineWidth=lw;x.strokeStyle=line;x.lineJoin='round';x.stroke();}}
+function rr(x,px,py,w,h,r,fill,line,lw){x.beginPath();x.roundRect(px,py,w,h,r);if(fill){x.fillStyle=fill;x.fill();}if(line&&lw){x.lineWidth=lw;x.strokeStyle=line;x.lineJoin='round';x.stroke();}}
+function dline(x,x1,y1,x2,y2,w,col){x.beginPath();x.moveTo(x1,y1);x.lineTo(x2,y2);x.lineWidth=w;x.strokeStyle=col;x.lineCap='round';x.stroke();}
+function dquad(x,x1,y1,cx,cy,x2,y2,w,col){x.beginPath();x.moveTo(x1,y1);x.quadraticCurveTo(cx,cy,x2,y2);x.lineWidth=w;x.strokeStyle=col;x.lineCap='round';x.stroke();}
+function dot(x,cx,cy,r,col){x.beginPath();x.arc(cx,cy,r,0,7);x.fillStyle=col;x.fill();}
+/* 并集剪影 */
+function rayT(ox,oy,dx,dy,s){
+  if(s.e){
+    const A=dx*dx/s.rx2+dy*dy/s.ry2,B=2*((ox-s.cx)*dx/s.rx2+(oy-s.cy)*dy/s.ry2),
+          C=(ox-s.cx)*(ox-s.cx)/s.rx2+(oy-s.cy)*(oy-s.cy)/s.ry2-1,D=B*B-4*A*C;
+    if(D<0)return 0;const t=(-B+Math.sqrt(D))/(2*A);return t>0?t:0;
+  }
+  let best=0;const p=s.pts;
+  for(let i=0;i<p.length;i++){
+    const a=p[i],b=p[(i+1)%p.length],ex=b[0]-a[0],ey=b[1]-a[1];
+    const den=dx*ey-dy*ex;if(Math.abs(den)<1e-9)continue;
+    const t=((a[0]-ox)*ey-(a[1]-oy)*ex)/den,u=((a[0]-ox)*dy-(a[1]-oy)*dx)/den;
+    if(t>best&&u>=-0.001&&u<=1.001)best=t;
+  }
+  return best;
+}
+const E=(cx,cy,rx,ry)=>({e:1,cx,cy,rx,ry,rx2:rx*rx,ry2:ry*ry});
+const T=(...flat)=>{const pts=[];for(let i=0;i<flat.length;i+=2)pts.push([flat[i],flat[i+1]]);return{pts};};
+function silPts(ox,oy,shapes){
+  const N=200,pts=[];
+  for(let i=0;i<N;i++){
+    const a=i/N*Math.PI*2,dx=Math.cos(a),dy=Math.sin(a);
+    let best=0;
+    for(const s of shapes){const t=rayT(ox,oy,dx,dy,s);if(t>best)best=t;}
+    pts.push([ox+dx*(best||1),oy+dy*(best||1)]);
+  }
+  return pts;
+}
+function pathOf(x,pts){
+  const n=pts.length;x.beginPath();
+  x.moveTo((pts[0][0]+pts[n-1][0])/2,(pts[0][1]+pts[n-1][1])/2);
+  for(let i=0;i<n;i++){const p=pts[i],q=pts[(i+1)%n];x.quadraticCurveTo(p[0],p[1],(p[0]+q[0])/2,(p[1]+q[1])/2);}
+  x.closePath();
+}
+function sil(x,ox,oy,shapes,fill,lw,noStroke){
+  const pts=silPts(ox,oy,shapes);
+  pathOf(x,pts);x.fillStyle=fill;x.fill();
+  if(!noStroke){pathOf(x,pts);x.lineWidth=lw;x.strokeStyle=LINE;x.lineJoin='round';x.stroke();}
+  return pts;
+}
+function clipSil(x,pts,fn){x.save();pathOf(x,pts);x.clip();fn();x.restore();}
+/* 软管（粗卷尾） */
+function tube(x,pts,wIn,fill){
+  const path=()=>{x.beginPath();x.moveTo(pts[0][0],pts[0][1]);
+    for(let i=1;i<pts.length-1;i++)x.quadraticCurveTo(pts[i][0],pts[i][1],(pts[i][0]+pts[i+1][0])/2,(pts[i][1]+pts[i+1][1])/2);
+    x.lineTo(pts[pts.length-1][0],pts[pts.length-1][1]);};
+  path();x.lineWidth=wIn+LW*1.7;x.strokeStyle=LINE;x.lineCap='round';x.lineJoin='round';x.stroke();
+  path();x.lineWidth=wIn;x.strokeStyle=fill;x.lineCap='round';x.stroke();
+}
+/* ================= 参考图规格的五官 ================= */
+function faceV3(x,o){
+  o=o||{};
+  const ey=o.eyeY??-14, dx=o.eyeDX??13.5, er=o.eyeR??4;
+  if(o.blink){
+    rr(x,-dx-3.6,ey-1.1,7.2,2.2,1.1,LINE);
+    rr(x, dx-3.6,ey-1.1,7.2,2.2,1.1,LINE);
+  }else{
+    dot(x,-dx,ey,er,LINE);dot(x,dx,ey,er,LINE);
+  }
+  x.save();x.globalAlpha=.95;
+  const br=o.blushR??5;
+  ell(x,-(dx+9),ey+8,br,br*.85,o.blush||'#f4b192');
+  ell(x, dx+9,ey+8,br,br*.85,o.blush||'#f4b192');
+  x.restore();
+  if(o.nose!==false)dot(x,0,ey+7,1.5,LINE);
+  const my=ey+11;
+  dquad(x,0,my,-2.4,my+3.2,-5,my+.4,1.9,LINE);
+  dquad(x,0,my, 2.4,my+3.2, 5,my+.4,1.9,LINE);
+  if(!o.noWhisk){
+    for(const s of[-1,1]){
+      dline(x,s*30,ey-7,s*47,ey-11,2.6,LINE);
+      dline(x,s*31,ey,  s*49,ey,  2.6,LINE);
+      dline(x,s*30,ey+7,s*46,ey+11,2.6,LINE);
+    }
+  }
+}
+function heart(x,cx,cy,s,col){
+  x.save();x.translate(cx,cy);x.scale(s,s);x.fillStyle=col||LINE;
+  x.beginPath();x.moveTo(0,3);x.bezierCurveTo(-6,-3,-2.5,-8,0,-4);x.bezierCurveTo(2.5,-8,6,-3,0,3);x.fill();
+  x.restore();
+}
+function flower(x,cx,cy,s){
+  x.save();x.translate(cx,cy);x.scale(s,s);
+  for(let i=0;i<5;i++){x.rotate(Math.PI*2/5);ell(x,5.4,0,3.6,2.7,'#f5c98f');}
+  dot(x,0,0,2,'#e2633f');x.restore();
+}
+/* ================= 主角：严格按参考图实测比例，全圆弧构成 =================
+   实测(H=100，地面向上)：全宽84(W/H0.84) 头宽84 头顶线88 耳尖100(高出12)
+   腰33 身宽63(=头宽75%) 身高33 | 眼径0.055头宽 眼距±0.30头宽 眼线55
+   腮红小圆点 | 构成=圆/椭圆/圆弧，胡须就是几根线 */
+function catV3(x,o){
+  o=o||{};
+  const dark=o.dark||'#191824';
+  const f=o.fill||'#fdfbf2',earIn=o.earIn||dark,tux=!!o.tux;
+  const squash=o.squash||0,tilt=o.tilt||0,hop=o.hop||0;
+  x.save();
+  x.translate(0,52-hop);x.rotate(tilt);x.scale(1+squash*.7,1-squash);x.translate(0,-52);
+  // 卷尾：一段圆弧
+  x.save();x.translate(25,18);x.rotate((o.tailA||0)*Math.PI/180);
+  tube(x,[[0,0],[11,2],[13,-8],[6,-12]],6,tux?dark:f);
+  x.restore();
+  // 一笔剪影：4 个椭圆 + 2 个三角耳，没有别的结构
+  const br=o.breath?1.02:1;
+  const shapes=[
+    E(0,33.5,31.5,16.5*br),        // 身（椭圆）
+    E(0,-10.5,42,27.5),            // 头（椭圆）
+    E(-20,43,11.5,8),E(20,43,11.5,8),// 胯包（椭圆）
+    T(-32,-25,-20,-50,-6,-36),     // 左耳（三角）
+    T( 32,-25, 20,-50, 6,-36)      // 右耳
+  ];
+  const pts=sil(x,0,6,shapes,tux?dark:f,LW);
+  // 内耳三角 + 奶牛猫白胸白爪（裁剪进剪影）
+  clipSil(x,pts,()=>{
+    blob(x,[[-26.5,-27],[-20,-44],[-14,-27]],earIn);
+    blob(x,[[ 26.5,-27],[ 20,-44],[ 14,-27]],earIn);
+    if(tux){
+      blob(x,[[-36,-8],[-31,-26],[-22,-15],[-11,-22],[0,-13],[11,-22],[22,-15],[31,-26],[36,-8],[30,8],[0,14],[-30,8]],'#fdfbf2');
+      blob(x,[[-15,12],[0,18],[15,12],[21,30],[24,50],[-24,50],[-21,30]],'#fdfbf2');
+    }
+  });
+  // 前腿：两个短粗圆角墩
+  const liftL=o.pawL?4:0, liftR=o.pawR?4:0;
+  if(tux){
+    ell(x,-11,46,10,6,'#fdfbf2');
+    ell(x, 11,46,10,6,'#fdfbf2');
+    dquad(x,-24,20,-15,26,-8,20,LW*.9,dark);
+    dquad(x, 24,20, 15,26,  8,20,LW*.9,dark);
+  }else{
+    rr(x,-16,38-liftL,12,14+liftL,5.5,f,LINE,LW*.8);
+    rr(x,  4,38-liftR,12,14+liftR,5.5,f,LINE,LW*.8);
+  }
+  // 地线
+  dline(x,-33,53.5,37,53.5,2,LINE);
+  // 脸：圆点眼 + 小圆腮红 + 小ω嘴 + 几根胡须线
+  const ey=-2, dx=12.6, er=2.4;
+  if(o.blink||o.hurt){
+    rr(x,-dx-3.2,ey-1,6.4,2,1,LINE);rr(x,dx-3.2,ey-1,6.4,2,1,LINE);
+  }else{
+    dot(x,-dx,ey,er,LINE);dot(x,dx,ey,er,LINE);
+  }
+  x.save();x.globalAlpha=.95;
+  ell(x,-22,ey+3.5,3,2.5,tux?'#f0a48a':'#f4b192');
+  ell(x, 22,ey+3.5,3,2.5,tux?'#f0a48a':'#f4b192');x.restore();
+  dot(x,0,ey+3.8,1.4,LINE);
+  dquad(x,0,ey+5.8,-2,ey+8.3,-4,ey+6.2,1.6,LINE);
+  dquad(x,0,ey+5.8, 2,ey+8.3, 4,ey+6.2,1.6,LINE);
+  for(const s of[-1,1]){
+    dline(x,s*36,ey-3.5,s*45,ey-5.5,1.4,LINE);
+    dline(x,s*37,ey,  s*46,ey,  1.4,LINE);
+    dline(x,s*36,ey+3.5,s*45,ey+5.5,1.4,LINE);
+  }
+  x.restore();
+  if(o.hearts){heart(x,46,-36,1.6);heart(x,52,-20,1);heart(x,40,-48,.8);}
+  if(o.zzz){x.fillStyle=LINE;x.font='700 11px sans-serif';x.fillText('z',42,-40);x.font='700 8px sans-serif';x.fillText('z',49,-47);}
+}
+/* ================= 怪物：同规格（大头大耳大眼） ================= */
+function mFace(x,o){
+  o=o||{};
+  const ey=o.eyeY??-10,dx=o.eyeDX??11,er=o.eyeR??3.5;
+  if(o.mask){ // 眼罩上白眼点
+    dot(x,-dx,ey,er,'#fdfbf2');dot(x,dx,ey,er,'#fdfbf2');
+  }else{
+    dot(x,-dx,ey,er,LINE);dot(x,dx,ey,er,LINE);
+  }
+  x.save();x.globalAlpha=.95;
+  ell(x,-(dx+8.5),ey+7,o.blushR??4.4,o.blushR??4.4*.85,'#f4b192');
+  ell(x, dx+8.5,ey+7,o.blushR??4.4,o.blushR??4.4*.85,'#f4b192');x.restore();
+  if(!o.noMouth){
+    dquad(x,0,o.my??-2,-2.2,(o.my??-2)+3,-4.5,(o.my??-2)+.4,1.8,LINE);
+    dquad(x,0,o.my??-2, 2.2,(o.my??-2)+3, 4.5,(o.my??-2)+.4,1.8,LINE);
+  }
+  if(!o.noWhisk)for(const s of[-1,1]){
+    dline(x,s*24,ey-4,s*38,ey-7,2.3,LINE);
+    dline(x,s*25,ey+1,s*39,ey+1,2.3,LINE);
+    dline(x,s*24,ey+6,s*37,ey+9,2.3,LINE);
+  }
+}
+function mRat(x){
+  const f='#c9c3d4';
+  const pts=sil(x,0,4,[E(0,17,26,21),E(0,-9,31,25),E(-19,-30,12,12),E(19,-30,12,12)],f,LW);
+  clipSil(x,pts,()=>{ell(x,-19,-30,7,7,'#f2b3c1');ell(x,19,-30,7,7,'#f2b3c1');});
+  tube(x,[[20,26],[38,30],[40,44]],2.6,'#dcb4c4');
+  mFace(x,{eyeY:-12,eyeDX:11,eyeR:3.5,nose:true});
+  dot(x,0,-2,2.2,'#ef8ba0');
+  ell(x,-8,36,6,4,f,LINE,LW*.8);ell(x,8,36,6,4,f,LINE,LW*.8);
+}
+mRat.n='灰灰鼠';
+function mSparrow(x){
+  const f='#d9a06b';
+  sil(x,0,6,[E(0,6,22,21),E(-22,12,8.5,11),E(22,12,8.5,11)],f,LW);
+  dline(x,-2,-16,-3.5,-23,2.4,LINE);dline(x,3,-16,4.5,-22,2.4,LINE);
+  blob(x,[[-7.5,6],[-4,2],[-.5,6],[-4,11]],'#f0912e',LINE,LW*.8);
+  mFace(x,{eyeY:-8,eyeDX:8,eyeR:3.2,noWhisk:1,noMouth:1,blushR:3.6});
+}
+mSparrow.n='小麻雀';
+function mSnail(x){
+  sil(x,-4,-2,[E(-4,-2,18,18)],'#c9a86a',LW);
+  x.lineWidth=2.6;x.strokeStyle=LINE;
+  x.beginPath();x.arc(-4,-2,10.5,0.6,5.4);x.stroke();
+  x.beginPath();x.arc(-4,-2,5,2.6,7.4);x.stroke();
+  sil(x,0,26,[E(0,26,22,10)],'#e9d9b8',LW);
+  tube(x,[[-16,24],[-25,12],[-26,4]],1.9,'#e9d9b8');
+  tube(x,[[16,24],[25,12],[26,4]],1.9,'#e9d9b8');
+  dot(x,-26,2,2.5,LINE);dot(x,26,2,2.5,LINE);
+  x.save();x.globalAlpha=.95;ell(x,-14,29,3.8,3.1,'#f4b192');ell(x,14,29,3.8,3.1,'#f4b192');x.restore();
+  dquad(x,0,31,-2.2,34,-4.5,31.5,1.8,LINE);
+  dquad(x,0,31,2.2,34,4.5,31.5,1.8,LINE);
+}
+mSnail.n='蜗牛仔';
+function mGoose(x){
+  const f='#fdfbf2';
+  sil(x,0,6,[E(0,5,27,22),E(-23,13,9,11.5),E(23,13,9,11.5)],f,LW);
+  blob(x,[[-7.5,13],[0,8],[7.5,13],[0,21]],'#f0912e',LINE,LW*.85);
+  mFace(x,{eyeY:-10,eyeDX:10,eyeR:3.9,noWhisk:1,noMouth:1,blushR:3.8});
+  ell(x,-9,34,7,4.4,'#f0912e',LINE,LW*.8);
+  ell(x, 9,34,7,4.4,'#f0912e',LINE,LW*.8);
+}
+mGoose.n='大白鹅';
+function mBat(x){
+  const f='#b7a8dc';
+  const pts=sil(x,0,8,[
+    E(0,10,21,20),
+    T(-7,-8,-13,-33,-21,-10),T(7,-8,13,-33,21,-10),
+    E(-28,2,8.5,8.5),E(-32,12,8,8),E(-26,20,7,7),
+    E(28,2,8.5,8.5),E(32,12,8,8),E(26,20,7,7)
+  ],f,LW);
+  clipSil(x,pts,()=>{ell(x,-29,10,9.5,16,'#a08fd0');ell(x,29,10,9.5,16,'#a08fd0');});
+  mFace(x,{eyeY:0,eyeDX:7.5,eyeR:3.2,noWhisk:1,my:8,blushR:3.4});
+  x.fillStyle='#fdfbf2';
+  x.beginPath();x.moveTo(-4,11);x.lineTo(-1.4,11);x.lineTo(-2.7,15);x.closePath();x.fill();
+  x.beginPath();x.moveTo(1.4,11);x.lineTo(4,11);x.lineTo(2.7,15);x.closePath();x.fill();
+}
+mBat.n='蝙蝠仔';
+function mRaccoon(x){
+  const f='#c9c3d4';
+  tube(x,[[22,22],[42,18],[44,2]],3.2,f);
+  dline(x,40,10,47,11,4.5,'#4a4a66');dline(x,43,20,50,21,4.5,'#4a4a66');
+  const pts=sil(x,0,4,[E(0,13,28,24),T(-26,-13,-22,-40,-6,-23),T(25,-14,22,-42,6,-24)],f,LW);
+  clipSil(x,pts,()=>{
+    ell(x,-11,-10,9,7,'#4a4a66');ell(x,11,-10,9,7,'#4a4a66');
+    ell(x,-18,-30,10,10,'#a9a2bd');ell(x,18,-30,10,10,'#a9a2bd');
+  });
+  mFace(x,{eyeY:-10,eyeDX:11,eyeR:3.4,mask:1,noMouth:1});
+  dot(x,0,2,2.4,'#4a4a66');
+  dquad(x,0,5,-2.2,8,-4.5,5.4,1.8,LINE);
+  dquad(x,0,5,2.2,8,4.5,5.4,1.8,LINE);
+  for(const s of[-1,1]){
+    dline(x,s*24,0,s*39,-2,2.3,LINE);
+    dline(x,s*25,5,s*40,5,2.3,LINE);
+    dline(x,s*24,10,s*38,13,2.3,LINE);
+  }
+}
+mRaccoon.n='浣熊团子';
+function mBulldog(x){
+  const f='#dca86f';
+  const pts=sil(x,0,6,[E(0,9,30,23),T(-28,-11,-30,-35,-13,-21),T(27,-12,30,-36,12,-22)],f,LW);
+  clipSil(x,pts,()=>{ell(x,-23,-27,11,10,'#b9834e');ell(x,23,-27,11,10,'#b9834e');});
+  dquad(x,-11,-16,-6,-20,-1,-16,1.9,LINE);
+  dquad(x, 1,-16, 6,-20,11,-16,1.9,LINE);
+  mFace(x,{eyeY:-8,eyeDX:12,eyeR:3.4,noMouth:1});
+  ell(x,0,2,4.6,3.5,LINE);
+  dquad(x,-11,12,0,17,11,12,2.2,LINE);
+  rr(x,-7.5,13,4.2,5.5,1,'#fdfbf2',LINE,1.2);rr(x,3.3,13,4.2,5.5,1,'#fdfbf2',LINE,1.2);
+}
+mBulldog.n='斗牛犬';
+function mCalico(x){
+  const f='#fdfbf2';
+  const pts=sil(x,0,4,[E(0,17,26,22),E(0,-9,31,25),T(-30,-26,-24,-62,-7,-40),T(30,-28,26,-64,8,-42)],f,LW);
+  clipSil(x,pts,()=>{
+    ell(x,-21,-40,13,13,'#3a3a55');
+    ell(x,13,-14,10.5,9,'#f0a050');
+    blob(x,[[-27,-32],[-24.5,-58],[-12,-42]],'#3a3a55');
+  });
+  mFace(x,{eyeY:-12,eyeDX:11.5,eyeR:3.6});
+}
+mCalico.n='三花姐';
+function mPigeon(x){
+  const f='#aeb6cf';
+  const pts=sil(x,0,6,[E(0,9,25,21),E(-22,14,8,11),E(22,14,8,11)],f,LW);
+  clipSil(x,pts,()=>{ell(x,0,-26,20,12,'#8d96b5');});
+  blob(x,[[-6,12],[-3,8],[0,12],[-3,16.5]],'#f0912e',LINE,LW*.8);
+  mFace(x,{eyeY:-6,eyeDX:9,eyeR:3.6,noWhisk:1,noMouth:1,blushR:3.6});
+}
+mPigeon.n='鸽子咕咕';
+function mBoss(x){
+  const f='#bfb8c9',s=1;
+  x.save();x.scale(s,s);
+  tube(x,[[30,28],[56,32],[58,10]],3.4,f);
+  const shapes=[E(0,19,36,30),E(0,-14,36,33),T(-33,-28,-29,-68,-9,-38),T(33,-28,29,-68,9,-38)];
+  const pts=sil(x,0,4,shapes,f,LW*1.15);
+  clipSil(x,pts,()=>{ell(x,-25,-46,12,12,'#f2b3c1');ell(x,25,-46,12,12,'#f2b3c1');});
+  blob(x,[[-16,-44],[-13,-63],[-5.5,-51],[0,-66],[5.5,-51],[13,-63],[16,-44]],'#f4c14f',LINE,LW*.85);
+  dot(x,0,-50,2.2,'#e0678f');
+  dline(x,-16,-28,-7,-23,2.4,LINE);dline(x,16,-28,7,-23,2.4,LINE);
+  dot(x,-12,-18,4.2,LINE);dot(x,12,-18,4.2,LINE);
+  x.save();x.globalAlpha=.95;ell(x,-22,-8,5,4.2,'#f4b192');ell(x,22,-8,5,4.2,'#f4b192');x.restore();
+  dot(x,0,-6,2.8,'#ef8ba0');
+  dquad(x,0,-2,-2.8,2,-5.5,-1.4,2,LINE);
+  dquad(x,0,-2, 2.8,2, 5.5,-1.4,2,LINE);
+  rr(x,-4.2,1,3.8,5.2,1,'#fdfbf2',LINE,1.1);rr(x,.4,1,3.8,5.2,1,'#fdfbf2',LINE,1.1);
+  for(const s2 of[-1,1]){
+    dline(x,s2*29,-16,s2*56,-20,3.2,LINE);
+    dline(x,s2*30,-9,s2*60,-8,3.2,LINE);
+    dline(x,s2*29,-2,s2*56,4,3.2,LINE);
+  }
+  x.restore();
+}
+mBoss.n='鼠王·铁须';
+/* ================= 图标道具 ================= */
+const ICONS=[
+ {n:'猫爪连击',f:g=>{for(let i=0;i<3;i++)dquad(g,-14+i*10,-15,-10+i*10,0,-14+i*10,15,5.5,'#ff8fb5');}},
+ {n:'喵喵音波',f:g=>{dot(g,-6,12,6,LINE);rr(g,-2,-15,4,28,2,LINE);dquad(g,2,-15,13,-13,15,-3,4,LINE);}},
+ {n:'飞鱼干',f:g=>{ell(g,-3,0,13,8,'#9fd4f6',LINE,3.4);blob(g,[[9,0],[21,-9],[21,9]],'#9fd4f6',LINE,3.4);dot(g,-10,-2,2,LINE);}},
+ {n:'鱼头斧',f:g=>{dline(g,-12,18,8,-9,6,'#a8703f');ell(g,12,-13,10,8.5,'#9fd4f6',LINE,3.4);dot(g,15,-15,2,LINE);}},
+ {n:'毛线环绕',f:g=>{ell(g,0,0,13,13,'#ff9dc3',LINE,3.6);dquad(g,-12,-4,0,-10,12,-4,2.6,'#e0678f');dquad(g,-12,4,0,0,12,4,2.6,'#e0678f');dquad(g,11,9,18,14,20,20,3,'#e0678f');}},
+ {n:'猫薄荷',f:g=>{for(const a of[-0.8,0,0.8]){g.save();g.translate(0,10);g.rotate(a);ell(g,0,-11,6.5,11,'#9fe29a',LINE,3);g.restore();}}},
+ {n:'猫砂弹',f:g=>{ell(g,-8,4,7.5,6.5,'#cfc0a4',LINE,3.2);ell(g,5,7,6,5,'#c2b294',LINE,3.2);ell(g,-1,-6,7,6,'#d8cab0',LINE,3.2);}},
+ {n:'炸毛静电',f:g=>{blob(g,[[4,-18],[-9,2],[-2,2],[-5,18],[10,-4],[2,-4]],'#ffd34f',LINE,3.4);}}
+];
+const ITEMS=[
+ {n:'小鱼干',f:g=>{g.save();g.rotate(-0.3);ell(g,0,0,12,7,'#8fd3ff',LINE,3.2);blob(g,[[9,0],[18,-7],[18,7]],'#8fd3ff',LINE,3.2);dot(g,-5,-2,1.6,'#fff');g.restore();}},
+ {n:'金币',f:g=>{ell(g,0,0,13,13,'#f4c14f',LINE,3.4);ell(g,0,0,8.5,8.5,null,'#d9a12e',2.4);}},
+ {n:'牛奶',f:g=>{rr(g,-9,-7,18,21,3,'#fdfbf2',LINE,3.2);blob(g,[[-9,-7],[0,-17],[9,-7]],'#fdfbf2',LINE,3.2);rr(g,-9,0,18,6,0,'#7fb7e6');}},
+ {n:'宝箱',f:g=>{rr(g,-16,-4,32,18,5,'#c08a4a',LINE,3.4);rr(g,-16,-13,32,11,5,'#96632f',LINE,3.4);rr(g,-3.5,-7,7,9,2.5,'#f4c14f',LINE,2.4);}}
+];
+/* ================= 动画驱动（7fps 步进 = 贴纸木偶感） ================= */
+let STEP=0;
+function pose(o){ // 由 STEP 派生姿势
+  o=o||{};
+  const t=STEP;
+  if(o.anim==='idle'){
+    o.breath=t%9<5; o.blink=t%27>=25; o.tailA=Math.sin(t*.6)*9;
+  }else if(o.anim==='walk'){
+    const f=t%4<2?0:1;
+    o.tilt=f?-.055:.055; o.pawL=f?0:1; o.pawR=f?1:0; o.hop=f?2:0; o.tailA=f?-10:10;
+  }else if(o.anim==='happy'){
+    const ph=t%8; o.hop=ph<2?10:ph<4?3:0; o.squash=ph===4?.06:0; o.hearts=ph<5;
+  }else if(o.anim==='hurt'){
+    const ph=t%12; o.hurt=ph<5; o.squash=ph<3?.12:ph<5?.05:0; o.tilt=ph<5?-.09:0;
+  }
+  return o;
+}
+/* ================= 页面 ================= */
+const W=1180;
+const boards=document.getElementById('boards');
+const redraws=[];
+function addBoard(name,tag,h,drawFn,animated){
+  const wrap=document.createElement('div');wrap.className='board';
+  wrap.innerHTML=`<div class="board-head"><h2>${name}</h2><span class="tag">${tag}</span>
+    <button class="dl">⬇ PNG</button></div>`;
+  const cv=document.createElement('canvas');cv.className='sheet';
+  cv.width=W*2;cv.height=h*2;cv.style.aspectRatio=W+'/'+h;
+  wrap.appendChild(cv);boards.appendChild(wrap);
+  wrap.querySelector('.dl').addEventListener('click',()=>{
+    cv.toBlob(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);
+      a.download='meow-art-v3.png';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),500);});
+  });
+  const ctx=cv.getContext('2d');
+  const render=()=>{ctx.setTransform(2,0,0,2,0,0);drawFn(ctx);};
+  render();if(animated)redraws.push(render);
+}
+function label(x,cx,y,txt,col){x.fillStyle=col;x.font='13px "Microsoft YaHei",sans-serif';x.textAlign='center';x.fillText(txt,cx,y);}
+const img1=new Image(),img2=new Image();
+let imgsOk=0;
+img1.onload=img2.onload=()=>{imgsOk++;if(imgsOk===2)renderAll();};
+img1.src='refs/ref1_white_cat.png';img2.src='refs/ref2_tuxedo_cat.png';
+let renderFns=[];
+function renderAll(){for(const f of renderFns)f();}
+/* --- ① 对照板：原图 vs 重画 --- */
+addBoard('① 对照 · 参考图(左) vs 重画(右)','同底色同尺寸并排，差距一目了然',820,x=>{
+  renderFns.push(()=>renderCmp(x));renderCmp(x);
+  function renderCmp(x){
+    x.fillStyle='#141320';x.fillRect(0,0,W,820);
+    const cell=(ry,img,myDraw,bgCol,lab)=>{
+      const rw=560,rh=356,rx=30,rx2=rx+rw+14;
+      // 原图侧（等比裁剪铺满）
+      x.save();x.beginPath();x.roundRect(rx,ry,rw,rh,16);x.clip();
+      x.fillStyle=bgCol;x.fillRect(rx,ry,rw,rh);
+      if(img&&img.width){
+        const k=Math.max(rw/img.width,rh/img.height);
+        const dw=img.width*k,dh=img.height*k;
+        x.drawImage(img,rx+(rw-dw)/2,ry+(rh-dh)/2,dw,dh);
+      }
+      x.restore();
+      // 重画侧
+      x.save();x.beginPath();x.roundRect(rx2,ry,rw,rh,16);x.clip();
+      x.fillStyle=bgCol;x.fillRect(rx2,ry,rw,rh);
+      x.save();x.translate(rx2+rw/2,ry+226);x.scale(2.4,2.4);myDraw();x.restore();
+      x.restore();
+      label(x,rx+rw/2,ry+rh+26,lab+' · 原图','#8f88b8');
+      label(x,rx2+rw/2,ry+rh+26,'重画 v3','#8f88b8');
+    };
+    cell(12,img1,()=>catV3(x,{fill:'#fdfbf2',earIn:'#221f2b'}),'#b26e48','白猫');
+    cell(424,img2,()=>catV3(x,{tux:1,dark:'#191824',earIn:'#f2c197'}),'#f2f0e3','奶牛猫');
+  }
+});
+/* --- ② 动效演示 --- */
+addBoard('② 动效演示（在动）','待机呼吸+眨眼 / 两帧摇摆走 / 开心跳 / 受击压扁 · 7fps 步进',430,x=>{
+  x.fillStyle='#26263f';x.fillRect(0,0,W,430);
+  for(let i=0;i<30;i++){x.globalAlpha=.14;dot(x,(i*137)%W,(i*89)%400+15,1.3,'#fff');x.globalAlpha=1;}
+  const cell=(cx,name,fn,bg)=>{
+    x.fillStyle=bg;x.beginPath();x.roundRect(cx-110,60,220,300,18);x.fill();
+    x.save();x.beginPath();x.roundRect(cx-110,60,220,300,18);x.clip();
+    x.save();x.translate(cx,272);x.scale(1.5,1.5);fn();x.restore();
+    x.restore();
+    label(x,cx,392,name,'#cfc8ee');
+  };
+  cell(160,'待机 · 呼吸+眨眼+摆尾',()=>catV3(x,pose({anim:'idle',fill:'#fdfbf2',earIn:'#221f2b'})),'#b26e48');
+  cell(400,'行走 · 两帧摇摆',()=>catV3(x,pose({anim:'walk',fill:'#f6a94e',earIn:'#fdf6e8'})),'#f2f0e3');
+  cell(640,'开心 · 跳跳+爱心',()=>catV3(x,pose({anim:'happy',tux:1,dark:'#191824',earIn:'#f2c197'})),'#b26e48');
+  cell(880,'受击 · 压扁后仰',()=>catV3(x,pose({anim:'hurt',fill:'#fdfbf2',earIn:'#221f2b'})),'#f2f0e3');
+  flower(x,300,100,1);flower(x,540,90,1);heart(x,760,100,1.4);flower(x,1000,95,1);
+},true);
+/* --- ③ 行走帧拆解 --- */
+addBoard('③ 行走帧拆解','贴纸风的走 = 整体左右倾摆 + 爪交换，剪影永不变形',330,x=>{
+  x.fillStyle='#b26e48';x.fillRect(0,0,W,330);
+  for(let i=0;i<16;i++)flower(x,(i*211+40)%W,20+(i*151)%270,.9);
+  [[170,'帧 A · 左倾/左爪',o=>{o.tilt=-.055;o.pawL=0;o.pawR=1;o.hop=2;o.tailA=-10;return o;}],
+   [430,'帧 B · 右倾/右爪',o=>{o.tilt=.055;o.pawL=1;o.pawR=0;o.hop=0;o.tailA=10;return o;}]
+  ].forEach(([cx,lab,mut])=>{
+    const o=mut({fill:'#fdfbf2',earIn:'#221f2b'});
+    x.save();x.translate(cx,232);x.scale(1.8,1.8);catV3(x,o);x.restore();
+    label(x,cx,322,lab,'#ffe9d2');
+  });
+  x.fillStyle='#ffe9d2';x.font='14px "Microsoft YaHei"';x.textAlign='left';
+  x.fillText('动画规则：',660,120);
+  x.globalAlpha=.85;x.font='13.5px "Microsoft YaHei"';
+  ['· 只做「整体变换」：倾斜/压扁/弹跳，一笔剪影永远不弯折 —— 保住贴纸感',
+   '· 四肢只做 2 帧交换（抬/落），不做补间 —— 像贴纸木偶/刺绣徽章的卡顿感',
+   '· 7fps 步进播放（140ms/帧），不追求丝滑，追求"可爱的顿挫"',
+   '· 表情只换眼睛：睁圆点 ↔ 眨眼横条；受击时整体压扁 + 后仰',
+   '· 尾巴是唯一"局部摆动"件：绕根部 ±10°，两帧换向'].forEach((s,i)=>x.fillText(s,660,152+i*30));
+  x.globalAlpha=1;
+});
+/* --- ④ 怪物 --- */
+addBoard('④ 怪物 · 参考图规格重做','大眼(头宽12%+) 大耳 内耳填满',560,x=>{
+  x.fillStyle='#f2f0e3';x.fillRect(0,0,W,560);
+  for(let i=0;i<22;i++)flower(x,(i*211+40)%W,26+(i*151)%500,.9);
+  const mons1=[mRat,mSparrow,mSnail,mGoose,mBat],mons2=[mRaccoon,mBulldog,mCalico,mPigeon];
+  mons1.forEach(fn=>{const cx=120+mons1.indexOf(fn)*132;
+    x.save();x.translate(cx,158);x.scale(1.5,1.5);fn(x);x.restore();
+    label(x,cx,258,fn.n,'#6b5142');});
+  mons2.forEach(fn=>{const cx=120+mons2.indexOf(fn)*132;
+    x.save();x.translate(cx,362);x.scale(1.5,1.5);fn(x);x.restore();
+    label(x,cx,462,fn.n,'#6b5142');});
+  x.save();x.translate(890,352);x.scale(1.55,1.55);mBoss(x);x.restore();
+  label(x,890,466,'鼠王·铁须','#6b5142');
+});
+/* --- ⑤ 图标道具 --- */
+addBoard('⑤ 武器图标 & 掉落','同一规范',250,x=>{
+  x.fillStyle='#26263f';x.fillRect(0,0,W,250);
+  const card=(cx,cy,fn)=>{rr(x,cx-31,cy-31,62,62,16,'#fdf6e8');x.save();x.translate(cx,cy);fn(x);x.restore();};
+  ICONS.forEach((ic,i)=>{const cx=120+i*76;card(cx,100,ic.f);label(x,cx,192,ic.n,'#cfc8ee');});
+  ITEMS.forEach((it,i)=>{const cx=790+i*76;card(cx,100,it.f);label(x,cx,192,it.n,'#cfc8ee');});
+  label(x,420,232,'8 武器图标（进化形态=同构换色加料）','#8f88b8');
+  label(x,946,232,'掉落道具','#8f88b8');
+});
+/* --- 动画循环 7fps --- */
+setInterval(()=>{STEP++;for(const r of redraws)r();},140);
+window.__freeze=()=>{for(let i=1;i<999;i++)clearInterval(i);};
+</script>
+</body>
+</html>

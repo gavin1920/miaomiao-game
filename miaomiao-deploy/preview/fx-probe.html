@@ -1,0 +1,48 @@
+<!DOCTYPE html><html><head><meta charset="UTF-8"></head><body>
+<pre id="out">booting...</pre>
+<canvas id="cv" width="1600" height="900"></canvas>
+<script src="../js/util.js"></script>
+<script src="../js/art.js"></script>
+<script src="../js/maps.js"></script>
+<script>
+window.addEventListener('load', () => {
+  const out = [];
+  try {
+    const m = MAPS.get('onsen');
+    m.init();
+    const cv = document.getElementById('cv');
+    const x = cv.getContext('2d');
+    const cam = { x: 2550, y: 1100 }, zoom = 0.9;
+    const w2sx = wx => (wx - cam.x), w2sy = wy => (wy - cam.y);
+    // 世界变换（绝对坐标风格：先平移相机）
+    x.setTransform(zoom, 0, 0, zoom, 800 - cam.x * zoom, 450 - cam.y * zoom);
+    const L = cam.x - 900, T = cam.y - 500, R = cam.x + 900, B = cam.y + 500;
+    m.drawGround(x, L, T, R, B, cam.x, cam.y);
+    m.drawDecor(x, L, T, R, B, w2sx, w2sy);
+    const steamN = m.steam.length;
+    m.drawFx(x, 3.3, w2sx, w2sy, L, T, R, B);
+    x.setTransform(1, 0, 0, 1, 0, 0);
+    // 采样：池中心上方雾柱若干点 + 池面雾底
+    const pts = [[2550, 1100], [2550, 1060], [2550, 1010], [2550, 950], [2540, 900]];
+    const samples = pts.map(([px, py]) => {
+      const sx = Math.round((px - cam.x) * zoom + 800), sy = Math.round((py - cam.y) * zoom + 450);
+      return Array.from(x.getImageData(sx, sy, 1, 1).data).slice(0, 3).join(',');
+    });
+    out.push('steam=' + steamN, 'samples=' + JSON.stringify(samples));
+    // 探针：把 drawFx 源码前 80 字符也带上（确认浏览器加载的版本）
+    out.push('hasMist=' + m.drawFx.toString().includes('常驻雾底'));
+  } catch (e) {
+    out.push('ERR ' + e.message);
+  }
+  document.getElementById('out').textContent = out.join(' | ');
+  // 把结果也画到画布上（headless --screenshot 可见）
+  x.setTransform(1, 0, 0, 1, 0, 0);
+  x.fillStyle = 'rgba(10,10,20,.85)';
+  x.fillRect(0, 0, 1600, 64);
+  x.fillStyle = '#ffe14d';
+  x.font = '700 26px monospace';
+  x.textBaseline = 'middle';
+  x.fillText(out.join(' | ').slice(0, 150), 20, 32);
+  document.title = 'FXPROBE';
+});
+</script></body></html>

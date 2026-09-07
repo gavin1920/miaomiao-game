@@ -1,0 +1,7 @@
+# Tencent Cloud EdgeOne
+.env
+.edgeone/*
+.tef_dist/*
+# dev artifacts
+shots$m.png
+.zcode/

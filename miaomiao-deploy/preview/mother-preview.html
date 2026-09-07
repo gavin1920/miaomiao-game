@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>老鼠妈妈 · 精灵预览（真实烘焙管线）</title>
+<style>
+  body{margin:0;background:#141530;color:#ffe9c4;font-family:"Microsoft YaHei",sans-serif;
+       display:flex;flex-direction:column;align-items:center;gap:14px;padding:24px}
+  h1{font-size:20px;letter-spacing:4px;margin:0}
+  .row{display:flex;gap:22px;flex-wrap:wrap;justify-content:center}
+  .cell{background:radial-gradient(circle at 50% 42%,#2c2e52,#191a30 72%);border:2px solid #3a3d63;
+        border-radius:16px;padding:12px;text-align:center}
+  .cell canvas{width:240px;height:240px;image-rendering:auto}
+  .cell p{margin:6px 0 0;font-size:13px;color:#b9b3d6}
+  .note{max-width:760px;font-size:13px;line-height:1.8;color:#8f89b0;text-align:center}
+</style>
+</head>
+<body>
+<h1>🐭 老鼠妈妈 · 精灵帧预览</h1>
+<div class="note">下面 4 帧由游戏内 <b>js/art.js</b> 的真实烘焙管线生成（与游戏里完全一致）：
+行走 A / 行走 B / 受击 / 全屏斩蓄力（大喊）。打开本页即可目检新 Boss 外形。</div>
+<div class="row" id="cells"></div>
+<script src="../js/util.js"></script>
+<script src="../js/art.js"></script>
+<script>
+  const names = [['walk', 0, '行走 A'], ['walk', 1, '行走 B'], ['hurt', 0, '受击'], ['tele', 0, '蓄力（全屏斩前摇）']];
+  const box = document.getElementById('cells');
+  for (const [kind, i, label] of names) {
+    const cell = document.createElement('div');
+    cell.className = 'cell';
+    const cv = document.createElement('canvas');
+    cv.width = 240; cv.height = 240;
+    const x = cv.getContext('2d');
+    x.imageSmoothingEnabled = true;
+    const spr = kind === 'tele' ? Art.E.mother.tele : Art.E.mother[kind][i];
+    x.drawImage(spr, 0, 0, 240, 240);
+    cell.appendChild(cv);
+    const p = document.createElement('p');
+    p.textContent = label;
+    cell.appendChild(p);
+    box.appendChild(cell);
+  }
+</script>
+</body>
+</html>

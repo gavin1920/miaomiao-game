@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>战报分享图预览（开发用）</title>
+<style>
+  body{background:#26233f;font-family:Consolas,monospace;color:#cbb;padding:16px}
+  canvas{display:block;margin:10px 0;max-width:540px;height:auto;box-shadow:0 8px 30px rgba(0,0,0,.5);border-radius:8px}
+  h3{color:#ffd9a0;margin:14px 0 2px}
+</style>
+</head>
+<body>
+<h3>战报分享图 · 成功（收工）</h3>
+<canvas id="win"></canvas>
+<h3>战报分享图 · 失败（倒下）</h3>
+<canvas id="lose"></canvas>
+<script src="../js/util.js"></script>
+<script src="../js/audio.js"></script>
+<script src="../js/art.js"></script>
+<script src="../js/game_config.js"></script>
+<script src="../js/data.js"></script>
+<script src="../js/result.js"></script>
+<script>
+function demo(win) {
+  return {
+    win, round: win ? 5 : 2, time: win ? 4272 : 663, lv: win ? 38 : 9,
+    kills: win ? 12846 : 1620, gold: win ? 5123 : 388,
+    dmgTotal: win ? 38274651 : 553388, dps: win ? 8961 : 834,
+    peakSec: win ? 284113 : 38309,
+    weapons: win
+      ? [{ id: 'claw', lv: 8, evolved: true }, { id: 'fish', lv: 8, evolved: true }, { id: 'axe', lv: 8, evolved: true }, { id: 'aura', lv: 8, evolved: true }, { id: 'zap', lv: 8 }]
+      : [{ id: 'claw', lv: 8, evolved: true }, { id: 'note', lv: 8, evolved: true }, { id: 'fish', lv: 8, evolved: true }, { id: 'aura', lv: 8, evolved: true }, { id: 'zap', lv: 8 }],
+    passives: [{ id: 'catnip', lv: 5 }, { id: 'gloves', lv: 4 }, { id: 'yarnball', lv: 3 }, { id: 'alarm', lv: 5 }, { id: 'milk', lv: 2 }, { id: 'koi', lv: 1 }],
+    affixes: [{ id: 'dmg', stacks: 12 }, { id: 'cd', stacks: 8 }, { id: 'area', stacks: 5 }, { id: 'amount', stacks: 7 }, { id: 'pierce', stacks: 3 }, { id: 'crit', stacks: 9 }, { id: 'lifesteal', stacks: 4 }],
+    best: { time: 4272, rounds: 5 },
+    date: new Date()
+  };
+}
+for (const [id, win] of [['win', true], ['lose', false]]) {
+  const card = Result.renderCard(demo(win));
+  const dst = document.getElementById(id);
+  dst.width = card.width; dst.height = card.height;
+  dst.getContext('2d').drawImage(card, 0, 0);
+  const cap = document.createElement('div');
+  cap.textContent = id + ': ' + card.width + 'x' + card.height;
+  dst.after(cap);
+}
+</script>
+</body>
+</html>

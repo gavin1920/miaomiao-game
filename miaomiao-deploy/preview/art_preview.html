@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>喵都幸存者 · 美术风格预览（贴纸风 4 方案）</title>
+<style>
+  :root{ --bg:#131320; --card:#1c1c2e; --ink:#e8e6f5; --sub:#9a96b8; }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);font-family:"Microsoft YaHei","PingFang SC",sans-serif;padding:26px 20px 60px}
+  h1{font-size:24px;letter-spacing:2px;margin-bottom:6px}
+  .sub{color:var(--sub);font-size:13.5px;line-height:1.9;max-width:1100px}
+  .sub b{color:#ffb3c7}
+  .inv{margin:14px 0 26px;background:var(--card);border:1px solid #2c2c46;border-radius:14px;padding:14px 18px;
+       font-size:12.5px;color:var(--sub);line-height:2;max-width:1100px}
+  .inv b{color:var(--ink)}
+  .board{background:var(--card);border:1px solid #2c2c46;border-radius:18px;padding:16px;margin-bottom:30px;max-width:1220px}
+  .board-head{display:flex;align-items:center;gap:14px;margin-bottom:12px}
+  .board-head h2{font-size:18px;letter-spacing:1px}
+  .board-head .tag{font-size:12px;color:#0e0e1c;background:#ffd166;border-radius:999px;padding:2px 12px}
+  .board-head .dl{margin-left:auto;font-size:12.5px;color:#cfcaf0;background:#33335a;border:1px solid #4a4a7a;
+       border-radius:999px;padding:5px 16px;cursor:pointer}
+  .board-head .dl:hover{background:#43437a}
+  canvas.sheet{width:100%;height:auto;display:block;border-radius:12px}
+</style>
+</head>
+<body>
+<h1>🎨 喵都幸存者 · 美术风格预览</h1>
+<div class="sub">
+  目标风格（来自参考图）：<b>超粗藏青描边 · 扁平色块 · 圆点眼 + ω 嘴 + 圆腮红 · 分离粗胡须 · 圆滚滚二头身</b>（日式 kawaii 贴纸/刺绣风）。<br>
+  下面 4 张样张内容完全相同（主角 / 行走帧 / 4 种小怪 / 奶牛猫皮肤构想 / 鼠王 Boss / 8 武器图标 / 掉落道具），方便横向对比。行走帧是<b>动的</b>。
+</div>
+<div class="inv">
+  <b>现有美术元素盘点（js/art.js，全部程序化绘制）：</b><br>
+  · <b>玩家大橘</b>：行走 4 帧、待机 2 帧、眨眼、受击、倒地，+ 主菜单大立绘 2 帧（坐姿挥手）<br>
+  · <b>敌人 9 种</b>（每种 走 2 帧 + 眨眼 + 惊讶）：灰灰鼠 / 小麻雀 / 蜗牛仔 / 大白鹅 / 蝙蝠仔 / 浣熊团子 / 斗牛犬 / 三花姐 / 鸽子咕咕；<b>Boss</b> 鼠王·铁须（登场 + 蓄力 + 行走）<br>
+  · <b>投射物</b>：音符、飞鱼干、大鱼干(进化)、鱼头斧、毛线球、大毛线球、猫砂团、爪击弧形闪电特效<br>
+  · <b>图标 24+</b>：8 武器 + 8 进化形态 + 8 被动道具，另有爪印/金币<br>
+  · <b>掉落物</b>：小鱼干 3 档（经验）、金币、牛奶、烟花、猫薄荷吸尘器、宝箱(开/闭)<br>
+  · <b>场景装饰 14 种</b>：树、灌木、路灯、消防栓、长椅、井盖、喷泉、贩卖机、水坑、纸箱、盆栽、池塘、斑马线、霓虹招牌×N<br>
+  · <b>天空</b>：月亮、云×2、城市剪影；<b>光效</b>：路灯光、玩家光、精英光、Boss 光、霓虹粉/青光、鱼干光<br>
+  · <b>代码直绘特效</b>：闪电链、星星粒子、升级光柱、爱心、汗滴、薄荷叶、猫砂区域
+</div>
+<div id="boards"></div>
+
+<script>
+'use strict';
+/* ================= 基础画笔 ================= */
+function P2(ctx){ctx.lineJoin='round';ctx.lineCap='round';}
+function blob(x,pts,fill,line,lw){
+  const n=pts.length;x.beginPath();
+  x.moveTo((pts[0][0]+pts[n-1][0])/2,(pts[0][1]+pts[n-1][1])/2);
+  for(let i=0;i<n;i++){const p=pts[i],q=pts[(i+1)%n];x.quadraticCurveTo(p[0],p[1],(p[0]+q[0])/2,(p[1]+q[1])/2);}
+  x.closePath();
+  if(fill){x.fillStyle=fill;x.fill();}
+  if(line&&lw){x.lineWidth=lw;x.strokeStyle=line;x.stroke();}
+}
+function ell(x,cx,cy,rx,ry,fill,line,lw){x.beginPath();x.ellipse(cx,cy,rx,ry,0,0,7);if(fill){x.fillStyle=fill;x.fill();}if(line&&lw){x.lineWidth=lw;x.strokeStyle=line;x.stroke();}}
+function rr(x,px,py,w,h,r,fill,line,lw){x.beginPath();x.roundRect(px,py,w,h,r);if(fill){x.fillStyle=fill;x.fill();}if(line&&lw){x.lineWidth=lw;x.strokeStyle=line;x.stroke();}}
+function dline(x,x1,y1,x2,y2,w,col){x.beginPath();x.moveTo(x1,y1);x.lineTo(x2,y2);x.lineWidth=w;x.strokeStyle=col;x.stroke();}
+function dquad(x,x1,y1,cx,cy,x2,y2,w,col){x.beginPath();x.moveTo(x1,y1);x.quadraticCurveTo(cx,cy,x2,y2);x.lineWidth=w;x.strokeStyle=col;x.stroke();}
+function dot(x,cx,cy,r,col){x.beginPath();x.arc(cx,cy,r,0,7);x.fillStyle=col;x.fill();}
+
+/* ================= 风格定义 ================= */
+const LINE='#26263c';
+function mkSt(o){return Object.assign({
+  line:LINE, lw:4.6, head:1, blush:'#f6b3a0', earIn:'#f2a9a0',
+  soft:false, shadow:false, pastel:false
+},o);}
+function pal(st){
+  return {
+    fur : st.pastel?'#f6b066':'#f5a54e',
+    furD: st.pastel?'#eb9c4e':'#e8923c',
+    cream:'#fdf6ea',
+    nose:'#ef8ba0',
+    collar:'#e05656',
+    bell:'#f4c14f'
+  };
+}
+
+/* ================= 生物绘制（单位空间约 100，原点在身体中心） ================= */
+function earTri(x,pts,fur,st){
+  blob(x,pts,fur,st.line,st.lw*0.92);
+  const cx=(pts[0][0]+pts[1][0]+pts[2][0])/3, cy=(pts[0][1]+pts[1][1]+pts[2][1])/3;
+  blob(x,pts.map(p=>[cx+(p[0]-cx)*0.52,cy+(p[1]-cy)*0.52+1.6]),st.earIn);
+}
+function catFace(x,hy,r,st,P,o){
+  // 眼
+  const er=2.9*st.head;
+  dot(x,-11.5,hy-3,er,st.line); dot(x,11.5,hy-3,er,st.line);
+  // 鼻
+  blob(x,[[-2.6,hy+6],[2.6,hy+6],[0,hy+9.8]],P.nose,st.line,1.6);
+  // ω 嘴
+  dquad(x,0,hy+10.5,-3,hy+14,-6.2,hy+10.8,1.7,st.line);
+  dquad(x,0,hy+10.5, 3,hy+14, 6.2,hy+10.8,1.7,st.line);
+  // 腮红
+  x.save();x.globalAlpha=.88;
+  dot(x,-19.5,hy+9,4.3*st.head,st.blush); dot(x,19.5,hy+9,4.3*st.head,st.blush);
+  x.restore();
+  // 胡须（分离粗短线）
+  for(const s of[-1,1]){
+    dline(x,s*20,hy+5,s*31,hy+2,1.7,st.line);
+    dline(x,s*20,hy+10,s*30,hy+13,1.7,st.line);
+  }
+}
+function catSit(x,st,o){
+  o=o||{};
+  const P=pal(st),lw=st.lw,line=st.line;
+  const tux=!!o.tuxedo;
+  const fur=tux?'#33334d':P.fur, furD=tux?'#26263c':P.furD;
+  // 尾巴（身后）
+  dquad(x,22,36,46,28,40,2,lw+9,line);
+  dquad(x,22,36,46,28,40,2,lw+1,furD);
+  // 身体
+  blob(x,[[-19,54],[-27,38],[-22,14],[0,5],[22,14],[27,38],[19,54]],fur,line,lw);
+  if(!tux){ // 侧条纹
+    dquad(x,-18,26,-13,34,-19,42,3.2,furD);
+    dquad(x, 18,26, 13,34, 19,42,3.2,furD);
+  }
+  // 肚皮
+  ell(x,0,40,12.5,13,P.cream);
+  // 前腿 + 后脚
+  rr(x,-11,26,7,28,3.5,fur,line,lw*0.8);
+  rr(x,  4,26,7,28,3.5,fur,line,lw*0.8);
+  ell(x,-14.5,55,7.5,4.5,P.cream,line,lw*0.8);
+  ell(x, 14.5,55,7.5,4.5,P.cream,line,lw*0.8);
+  // 头
+  const hy=-20,r=29*st.head;
+  earTri(x,[[-26,hy-12],[-19,hy-36],[-3,hy-20]],fur,st);
+  earTri(x,[[ 26,hy-12],[ 19,hy-36],[ 3,hy-20]],fur,st);
+  ell(x,0,hy,r,r*0.96,fur,line,lw);
+  if(tux){ // 奶牛猫白脸（裁剪在头内）
+    x.save();x.beginPath();x.arc(0,hy,r-2,0,7);x.clip();
+    blob(x,[[-r,hy+6],[-r*0.7,hy+r*0.75],[0,hy+r*0.92],[r*0.7,hy+r*0.75],[r,hy+6],[r*0.4,hy-6],[0,hy-2],[-r*0.4,hy-6]],P.cream);
+    x.restore();
+  } else { // 橘猫额头条纹
+    dline(x,-7,hy-r*0.62,-7,hy-r*0.62+7,3,P.furD);
+    dline(x, 0,hy-r*0.72, 0,hy-r*0.72+8,3,P.furD);
+    dline(x, 7,hy-r*0.62, 7,hy-r*0.62+7,3,P.furD);
+  }
+  catFace(x,hy,r,st,P,o);
+  // 项圈 + 铃铛
+  x.save();x.beginPath();x.ellipse(0,hy+r*0.8,15.5,6.5,0,0.12*Math.PI,0.88*Math.PI);
+  x.lineWidth=5;x.strokeStyle=P.collar;x.stroke();x.restore();
+  dot(x,0,hy+r*0.8+7,4.2,P.bell);
+  x.beginPath();x.arc(0,hy+r*0.8+7,4.2,0,7);x.lineWidth=1.6;x.strokeStyle=line;x.stroke();
+  dline(x,0,hy+r*0.8+9.5,0,hy+r*0.8+11.5,1.4,'#b57b1e');
+}
+function catWalk(x,st,f,o){
+  o=o||{};
+  const P=pal(st),lw=st.lw,line=st.line;
+  const tux=!!o.tuxedo;
+  const fur=tux?'#33334d':P.fur, furD=tux?'#26263c':P.furD;
+  // 尾巴
+  dquad(x,-20,14,-38,4,-32,-14,lw+8,line);
+  dquad(x,-20,14,-38,4,-32,-14,lw,furD);
+  // 身体
+  blob(x,[[-24,28],[-28,10],[-14,-2],[10,-3],[24,4],[27,20],[10,32],[-8,32]],fur,line,lw);
+  // 腿（对角步态）：1,2 远侧先画
+  const xs=[-20,-9,7,18];
+  const lift=f?[0,-5,0,-5]:[-5,0,-5,0];
+  [1,2].forEach(i=>rr(x,xs[i],22+lift[i],7,16,3.5,furD,line,lw*0.8));
+  [0,3].forEach(i=>rr(x,xs[i],22+lift[i],7,16,3.5,fur,line,lw*0.8));
+  if(!tux){ dquad(x,-14,6,-10,13,-15,20,3,furD); dquad(x,-2,2,2,9,-3,16,3,furD); }
+  ell(x,0,14,11,8,P.cream);
+  // 头（侧脸朝右）
+  const hy=-8,r=22*st.head;
+  earTri(x,[[9,hy-14],[12,hy-34],[24,hy-18]],fur,st);
+  earTri(x,[[23,hy-18],[32,hy-30],[35,hy-12]],fur,st);
+  ell(x,20,hy,r,r*0.95,fur,line,lw);
+  if(tux){
+    x.save();x.beginPath();x.arc(20,hy,r-2,0,7);x.clip();
+    blob(x,[[20-r,hy+4],[20-r*0.7,hy+r*0.7],[20,hy+r*0.9],[20+r*0.7,hy+r*0.7],[20+r,hy+4],[20+r*0.4,hy-6],[20,hy-2],[20-r*0.4,hy-6]],P.cream);
+    x.restore();
+  } else {
+    ell(x,27,hy+5,7.5,6,P.cream);
+  }
+  // 脸：眼/嘴/腮红/胡须 都集中头部右侧
+  dot(x,23,hy-4,2.8,line);
+  dquad(x,29,hy+3,31,hy+6,33.5,hy+3.5,1.6,line);
+  x.save();x.globalAlpha=.85;dot(x,14,hy+4,3,st.blush);x.restore();
+  dline(x,30,hy+1,41,hy-3,1.5,line);
+  dline(x,30,hy+5,41,hy+4,1.5,line);
+  // 项圈贴脖子
+  dquad(x,6,7,18,12,30,5,4.5,P.collar);
+  dot(x,15,14,3.4,P.bell);
+}
+function rat(x,st,o){
+  o=o||{};
+  const P=pal(st),lw=st.lw,line=st.line;
+  const fur=o.fur||'#b3aec2';
+  dquad(x,-22,24,-46,20,-50,0,lw+6,line);
+  dquad(x,-22,24,-46,20,-50,0,3,'#e2a8b8');
+  blob(x,[[-20,40],[-27,22],[-22,2],[-6,-8],[12,-6],[24,6],[26,22],[16,40]],fur,line,lw);
+  ell(x,2,26,11,10,'#e6e2ec');
+  ell(x,-2,-14,9,9,fur,line,lw*0.85); ell(x,-2,-14,4.6,4.6,st.earIn);
+  ell(x,14,-12,8,8,fur,line,lw*0.85); ell(x,14,-12,4,4,st.earIn);
+  dot(x,18,0,2.8,line);
+  dot(x,27,8,2.4,P.nose);
+  rr(x,21,11,4.4,5.5,1.2,'#fff',line,1.4);
+  dline(x,24,8,35,5,1.5,line); dline(x,24,11,34,14,1.5,line);
+  ell(x,-6,42,6.5,4,fur,line,lw*0.8);
+  ell(x,10,42,6.5,4,fur,line,lw*0.8);
+}
+function goose(x,st){
+  const lw=st.lw,line=st.line,W='#fbf7ee';
+  // 尾巴小翘
+  blob(x,[[-22,14],[-33,4],[-25,22]],W,line,lw*0.8);
+  // 身体（横椭圆）
+  blob(x,[[-26,36],[-30,14],[-16,0],[10,0],[24,10],[27,28],[12,40]],W,line,lw);
+  // 翅膀（无描边，扁平色块）
+  blob(x,[[-14,12],[-22,22],[-12,32],[4,30],[8,18],[-2,10]],'#ece7db');
+  // 短脖 + 头
+  dquad(x,12,6,24,-6,22,-16,lw+9,line);
+  dquad(x,12,6,24,-6,22,-16,lw+2,W);
+  ell(x,22,-18,11.5,10.5,W,line,lw);
+  // 头顶小绒毛
+  dline(x,19,-29,18,-33,1.8,line);
+  dline(x,24,-29,24.5,-33,1.8,line);
+  // 大橙喙
+  blob(x,[[30,-21],[44,-15],[29,-10]],'#f0912e',line,lw*0.75);
+  dot(x,26,-21,2.7,line);
+  // 橙脚
+  blob(x,[[-14,47],[-3,47],[-8.5,40]],'#f0912e',line,lw*0.7);
+  blob(x,[[4,47],[15,47],[9.5,40]],'#f0912e',line,lw*0.7);
+}
+function bulldog(x,st){
+  const lw=st.lw,line=st.line;
+  const fur='#d8a26e',dark='#8a5a38',muz='#e9c191';
+  // 身体（矮壮）
+  blob(x,[[-28,40],[-33,16],[-20,0],[8,-2],[28,6],[32,28],[16,42]],fur,line,lw);
+  rr(x,-24,32,10,12,4,fur,line,lw*0.8);
+  rr(x, 16,32,10,12,4,fur,line,lw*0.8);
+  // 头（大头）
+  ell(x,13,-14,24,21,fur,line,lw);
+  // 折耳（贴头顶两侧）
+  blob(x,[[-9,-22],[-8,-38],[6,-30]],dark,line,lw*0.8);
+  blob(x,[[35,-22],[34,-38],[20,-30]],dark,line,lw*0.8);
+  // 眉间皱纹
+  dquad(x,2,-25,6,-28,10,-25,1.8,line);
+  dquad(x,17,-26,21,-29,25,-26,1.8,line);
+  // 眼：左正常 + 右黑斑
+  dot(x,6,-17,2.6,line);
+  dot(x,21,-17,6,dark);
+  dot(x,21,-17,2.6,'#f8ead2');
+  // 大鼻口
+  ell(x,13,-6,12,9,muz,line,lw*0.7);
+  ell(x,13,-11,4.5,3.4,line);
+  // 腮帮子
+  ell(x,2,2,9,8,fur,line,lw*0.8);
+  ell(x,24,2,9,8,fur,line,lw*0.8);
+  // 地包天嘴 + 牙
+  dquad(x,3,9,13,12,23,9,2.2,line);
+  rr(x,8,10,4,5,1,'#fff',line,1.2);
+  rr(x,15,10,4,5,1,'#fff',line,1.2);
+  // 项圈
+  dquad(x,-6,10,13,17,30,9,5,'#d9534f');
+}
+function bat(x,st){
+  const lw=st.lw,line=st.line;
+  const fur='#a295cc',wing='#7f71ad';
+  blob(x,[[-12,4],[-30,-6],[-26,6],[-34,14],[-20,18],[-10,14]],wing,line,lw*0.8);
+  blob(x,[[12,4],[30,-6],[26,6],[34,14],[20,18],[10,14]],wing,line,lw*0.8);
+  ell(x,0,8,16,15,fur,line,lw);
+  blob(x,[[-10,-4],[-13,-16],[-3,-8]],fur,line,lw*0.8);
+  blob(x,[[10,-4],[13,-16],[3,-8]],fur,line,lw*0.8);
+  dot(x,-6,6,2.4,line); dot(x,6,6,2.4,line);
+  x.save();x.globalAlpha=.85;dot(x,-11,11,2.6,'#f6b3a0');dot(x,11,11,2.6,'#f6b3a0');x.restore();
+  dot(x,0,12,1.8,'#ef8ba0');
+  x.fillStyle='#fff';
+  x.beginPath();x.moveTo(-4.5,15);x.lineTo(-2.5,15);x.lineTo(-3.5,18);x.closePath();x.fill();
+  x.beginPath();x.moveTo(2.5,15);x.lineTo(4.5,15);x.lineTo(3.5,18);x.closePath();x.fill();
+}
+function bossRat(x,st){
+  const P=pal(st),lw=st.lw,line=st.line;
+  const fur='#9b8f88',cream='#e8dfd2';
+  dquad(x,-34,40,-62,34,-66,8,lw+8,line);
+  dquad(x,-34,40,-62,34,-66,8,4.5,'#c693a5');
+  blob(x,[[-30,56],[-40,26],[-30,-2],[0,-12],[30,-2],[40,26],[30,56]],fur,line,lw*1.05);
+  ell(x,0,32,20,16,cream);
+  rr(x,-34,18,10,20,5,fur,line,lw*0.9);
+  rr(x, 24,18,10,20,5,fur,line,lw*0.9);
+  const hy=-30,hr=32*st.head;
+  ell(x,-22,hy-24,13,13,fur,line,lw); ell(x,-22,hy-24,6.5,6.5,st.earIn);
+  ell(x, 22,hy-24,13,13,fur,line,lw); ell(x, 22,hy-24,6.5,6.5,st.earIn);
+  ell(x,0,hy,hr,hr*0.96,fur,line,lw*1.05);
+  blob(x,[[-17,hy-hr+6],[-17,hy-hr-10],[-8,hy-hr-2],[0,hy-hr-13],[8,hy-hr-2],[17,hy-hr-10],[17,hy-hr+6]],'#f4c14f',line,lw*0.9);
+  dot(x,0,hy-hr+2.5,2.2,'#e0678f');
+  dline(x,8,hy-14,18,hy-6,2.2,line);
+  dline(x,6,hy-8,14,0,2.2,line);
+  dot(x,-11,hy-2,3.2,line); dot(x,12,hy-2,3.2,line);
+  ell(x,0,hy+9,4.5,3.4,P.nose,line,1.8);
+  rr(x,-5,hy+14,4.6,7,1.4,'#fff',line,1.5);
+  rr(x, 1,hy+14,4.6,7,1.4,'#fff',line,1.5);
+  for(const s of[-1,1]){ // 铁须：粗黑三根
+    dline(x,s*14,hy+8,s*34,hy+2,2.8,line);
+    dline(x,s*14,hy+13,s*33,hy+17,2.8,line);
+    dline(x,s*12,hy+17,s*28,hy+24,2.8,line);
+  }
+  ell(x,-14,58,9,5.5,fur,line,lw);
+  ell(x, 14,58,9,5.5,fur,line,lw);
+}
+
+/* ================= 武器图标 / 道具（±24 单位） ================= */
+const ICONS=[
+ {n:'猫爪连击', f:g=>{for(let i=0;i<3;i++)dquad(g,-14+i*11,-16,-10+i*11,0,-14+i*11,16,5,'#ff8fb5');}},
+ {n:'喵喵音波', f:g=>{dot(g,-6,12,6,g._line);rr(g,-2,-14,3.6,27,1.8,g._line);dquad(g,1.6,-14,12,-12,14,-2,3.6,g._line);}},
+ {n:'飞鱼干',   f:g=>{ell(g,-2,0,13,7.5,'#9fd4f6',g._line,2.8);blob(g,[[10,0],[21,-8],[21,8]],'#9fd4f6',g._line,2.8);dot(g,-9,-2,1.8,g._line);}},
+ {n:'鱼头斧',   f:g=>{dline(g,-12,18,8,-10,5,'#a8703f');ell(g,12,-13,10,8,'#9fd4f6',g._line,2.8);blob(g,[[6,-20],[11,-27],[15,-19]],'#9fd4f6',g._line,2.4);dot(g,15,-15,1.8,g._line);}},
+ {n:'毛线环绕', f:g=>{ell(g,0,0,13,13,'#ff9dc3',g._line,3);dquad(g,-12,-4,0,-10,12,-4,2.2,'#e0678f');dquad(g,-13,3,0,-2,13,3,2.2,'#e0678f');dquad(g,-10,9,0,5,10,9,2.2,'#e0678f');dquad(g,11,9,18,14,20,20,2.4,'#e0678f');}},
+ {n:'猫薄荷',   f:g=>{for(const a of[-0.85,0,0.85]){g.save();g.translate(0,10);g.rotate(a);ell(g,0,-12,6.5,12,'#9fe29a',g._line,2.6);g.restore();}}},
+ {n:'猫砂弹',   f:g=>{ell(g,-8,4,7,6,'#cfc0a4',g._line,2.6);ell(g,4,7,6,5,'#c2b294',g._line,2.6);ell(g,-1,-5,6.5,5.5,'#d8cab0',g._line,2.6);dot(g,12,-8,1.8,'#e0678f');dot(g,16,-2,1.4,'#e0678f');}},
+ {n:'炸毛静电', f:g=>{blob(g,[[3,-18],[-9,2],[-2,2],[-5,18],[10,-4],[2,-4]],'#ffd34f',g._line,3);}}
+];
+const ITEMS=[
+ {n:'小鱼干', f:g=>{g.save();g.rotate(-0.35);ell(g,0,0,12,6.5,'#8fd3ff',g._line,2.6);blob(g,[[9,0],[18,-6],[18,6]],'#8fd3ff',g._line,2.6);dot(g,-5,-2,1.5,'#fff');g.restore();}},
+ {n:'金币',   f:g=>{ell(g,0,0,13,13,'#f4c14f',g._line,3);ell(g,0,0,9,9,null,'#e0a83a',2);dot(g,-3.5,-3,1.7,'#b57b1e');dot(g,3.5,-3,1.7,'#b57b1e');dot(g,0,-6,1.7,'#b57b1e');ell(g,0,2,3.4,2.6,'#b57b1e');}},
+ {n:'牛奶',   f:g=>{rr(g,-9,-8,18,22,2.5,'#fff',g._line,2.8);blob(g,[[-9,-8],[0,-18],[9,-8]],'#fff',g._line,2.8);rr(g,-9,-1,18,6,0,'#7fb7e6');}},
+ {n:'宝箱',   f:g=>{rr(g,-16,-4,32,18,4,'#c08a4a',g._line,3);rr(g,-16,-12,32,10,4,'#96632f',g._line,3);rr(g,-3,-6,6,8,2,'#f4c14f',g._line,2);}}
+];
+
+/* ================= 样张 ================= */
+const SHEETS=[
+ {key:'A',name:'方案 A · 厚描边贴纸风',tag:'最接近参考图',
+  desc:'藏青超粗描边 · 扁平色 · 圆点眼+ω嘴+腮红 · 分离胡须；陶土红底直接对应参考图 1',
+  bg:'#b56744',label:'#ffe9d2',gsh:'rgba(60,26,10,.25)',card:'#fff6e8',deco:'plain',
+  st:mkSt({})},
+ {key:'B',name:'方案 B · 奶油刺绣风',tag:'参考图 2 质感',
+  desc:'描边带绒毛软边（刺绣贴纸感）· 奶油底 + 橘色小花点缀 · 附黑白奶牛猫皮肤构想',
+  bg:'#f1ecdf',label:'#6b5142',gsh:'rgba(90,60,40,.18)',card:'#ffffff',deco:'flowers',
+  st:mkSt({soft:true,lw:4.2})},
+ {key:'C',name:'方案 C · 贴纸×夜都（落地效果）',tag:'放进游戏的样子',
+  desc:'同一套贴纸放进深夜蓝底（游戏是夜城）：加奶油投影让贴纸在暗背景上跳出来',
+  bg:'#191c33',label:'#e9e6ff',gsh:'rgba(0,0,0,.4)',card:'#262b4d',deco:'night',
+  st:mkSt({shadow:true})},
+ {key:'D',name:'方案 D · 胖墩二头身',tag:'更 Q 更圆',
+  desc:'头再大一圈、线更粗、眼圆腮红大、配色更粉嫩 —— 走极致可爱路线',
+  bg:'#efd6c8',label:'#71493e',gsh:'rgba(90,50,30,.2)',card:'#fff8f0',deco:'dots',
+  st:mkSt({head:1.18,lw:5.4,blush:'#f8a89a',pastel:true})}
+];
+const W=1180,H=690;
+const boards=document.getElementById('boards');
+const anim=[];
+for(const sh of SHEETS){
+  const wrap=document.createElement('div');wrap.className='board';
+  wrap.innerHTML=`<div class="board-head"><h2>${sh.name}</h2><span class="tag">${sh.tag}</span>
+    <button class="dl">⬇ 下载 PNG</button></div>`;
+  const cv=document.createElement('canvas');cv.className='sheet';
+  cv.width=W*2;cv.height=H*2;cv.style.aspectRatio=W+'/'+H;
+  wrap.appendChild(cv);boards.appendChild(wrap);
+  wrap.querySelector('.dl').addEventListener('click',()=>{
+    cv.toBlob(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);
+      a.download='meow-art-'+sh.key+'.png';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),500);});
+  });
+  sh.cv=cv;sh.ctx=cv.getContext('2d');
+  anim.push(sh);
+}
+function drawDeco(sh){
+  const x=sh.ctx;x.save();
+  if(sh.deco==='flowers'){
+    for(let i=0;i<16;i++){
+      const fx=(i*173%1100)+60,fy=(i*97%560)+90;
+      x.save();x.translate(fx,fy);x.globalAlpha=.5;
+      for(let p=0;p<5;p++){x.rotate(1.2566);ell(x,7,0,4.5,3,'#f5b97a');}
+      dot(x,0,0,2.4,'#d9604a');x.restore();
+    }
+  } else if(sh.deco==='night'){
+    for(let i=0;i<70;i++){
+      const sx=(i*137%1180),sy=(i*89%620)+20;
+      x.globalAlpha=.25+.45*Math.abs(Math.sin(i*3.7));
+      dot(x,sx,sy,i%7===0?1.8:1,'#fff');
+    }
+    x.globalAlpha=.9;
+    for(let i=0;i<6;i++){
+      const sx=(i*211+80)%1120+40,sy=(i*151)%540+70;
+      dline(x,sx-4,sy,sx+4,sy,1.4,'#fff');dline(x,sx,sy-4,sx,sy+4,1.4,'#fff');
+    }
+  } else if(sh.deco==='dots'){
+    x.globalAlpha=.4;
+    for(let gy=40;gy<H;gy+=56)for(let gx=(gy/56%2)*28+14;gx<W;gx+=56)dot(x,gx,gy,5.5,'#e2b3a2');
+  }
+  x.restore();
+}
+function stamp(ctx,cx,cy,s,st,fn){
+  if(!st._off){st._off=document.createElement('canvas');st._off.width=720;st._off.height=720;}
+  const off=st._off,g=off.getContext('2d');
+  g.setTransform(1,0,0,1,0,0);g.clearRect(0,0,720,720);
+  g.translate(360,360);g.scale(s*2,s*2);P2(g);
+  g._line=st.line;
+  if(st.soft){g.shadowColor=st.line+'55';g.shadowBlur=st.lw*2.4;}
+  fn(g);
+  ctx.save();
+  if(st.shadow){ctx.shadowColor='rgba(5,4,16,.55)';ctx.shadowBlur=16;ctx.shadowOffsetY=8;}
+  ctx.drawImage(off,cx-180,cy-180,360,360);
+  ctx.restore();
+}
+function drawIconCard(sh,g,x,y,fn){
+  g.save();g.translate(x,y);
+  rr(g,-30,-30,60,60,14,sh.card,g._dlc,2);
+  g.scale(1.05,1.05);
+  fn(g);
+  g.restore();
+}
+function renderSheet(sh,f){
+  const x=sh.ctx,st=sh.st;
+  x.setTransform(2,0,0,2,0,0);
+  x.fillStyle=sh.bg;x.fillRect(0,0,W,H);
+  drawDeco(sh);
+  // 标题
+  x.fillStyle=sh.label;x.textAlign='left';x.textBaseline='alphabetic';
+  x.font='700 25px "Microsoft YaHei",sans-serif';x.fillText(sh.name,36,50);
+  x.globalAlpha=.8;x.font='12.5px "Microsoft YaHei",sans-serif';x.fillText(sh.desc,36,76);x.globalAlpha=1;
+  // 色板
+  const P=pal(st);
+  const chips=[st.line,P.fur,P.cream,st.earIn,st.blush,'#f4c14f'];
+  sh._dlc=sh.label==='#e9e6ff'?'rgba(255,255,255,.3)':'rgba(0,0,0,.18)';
+  chips.forEach((c,i)=>rr(x,866+i*30,32,22,22,6,c,sh._dlc,1.5));
+  // 样本
+  const gy1=452,gy2=660;
+  const specs=[
+    {l:'大橘 · 坐姿主视图',xx:130,yy:298,s:2.0,gy:60,d:g=>catSit(g,st,{})},
+    {l:'大橘 · 行走循环',xx:325,yy:322,s:1.8,gy:40,d:(g,f)=>catWalk(g,st,f,{})},
+    {l:'灰灰鼠',xx:492,yy:330,s:1.7,gy:46,d:g=>rat(g,st)},
+    {l:'大白鹅',xx:638,yy:330,s:1.7,gy:48,d:g=>goose(g,st)},
+    {l:'斗牛犬',xx:792,yy:330,s:1.7,gy:46,d:g=>bulldog(g,st)},
+    {l:'蝙蝠仔',xx:938,yy:325,s:1.6,gy:42,d:g=>bat(g,st)},
+    {l:'奶牛猫·皮肤构想',xx:1085,yy:305,s:1.5,gy:60,d:g=>catSit(g,st,{tux:true})},
+    {l:'鼠王·铁须',xx:140,yy:556,s:1.12,gy:62,d:g=>bossRat(g,st)}
+  ];
+  for(const sp of specs){
+    // 地面影
+    x.save();x.fillStyle=sh.gsh;
+    x.beginPath();x.ellipse(sp.xx,sp.yy+sp.gy*sp.s+5,30*sp.s,7.5*sp.s,0,0,7);x.fill();x.restore();
+    stamp(x,sp.xx,sp.yy,sp.s,st,g=>sp.d(g,f));
+    x.fillStyle=sh.label;x.font='12.5px "Microsoft YaHei",sans-serif';x.textAlign='center';
+    x.fillText(sp.l,sp.xx,gy1<sp.yy?Math.max(sp.yy+sp.gy*sp.s+24,gy1):sp.yy+sp.gy*sp.s+24);
+  }
+  // 武器图标
+  x.font='12.5px "Microsoft YaHei",sans-serif';x.textAlign='center';
+  ICONS.forEach((ic,i)=>{
+    const ix=300+i*74;
+    drawIconCard(sh,x,ix,558,g=>{g._line=st.line;ic.f(g);});
+    x.fillStyle=sh.label;x.globalAlpha=.75;x.fillText(ic.n,ix,636);x.globalAlpha=1;
+  });
+  x.fillStyle=sh.label;x.globalAlpha=.6;x.fillText('↑ 8 武器图标（进化形态同风格换色/加料）',566,664);x.globalAlpha=1;
+  // 道具
+  ITEMS.forEach((it,i)=>{
+    const ix=915+i*70;
+    drawIconCard(sh,x,ix,558,g=>{g._line=st.line;it.f(g);});
+    x.fillStyle=sh.label;x.globalAlpha=.75;x.fillText(it.n,ix,636);x.globalAlpha=1;
+  });
+  x.fillStyle=sh.label;x.globalAlpha=.6;x.fillText('↑ 掉落道具',1060,664);x.globalAlpha=1;
+}
+let lastF=-1;
+function loop(t){
+  requestAnimationFrame(loop);
+  const f=Math.floor(t/180)%2;
+  if(f===lastF)return;
+  lastF=f;
+  for(const sh of anim)renderSheet(sh,f);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
