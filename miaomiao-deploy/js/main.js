@@ -14,11 +14,15 @@
   function resize() {
     dpr = Math.min(2, window.devicePixelRatio || 1);
     vw = window.innerWidth; vh = window.innerHeight;
+    if (vw < 2 || vh < 2) return; // 旋转/分屏切换瞬间 innerWidth 可能短暂为 0，等下一帧自愈检查再量
     // 意见6：整体视野 = 原来的 4 倍（2 倍宽 × 2 倍高）→ 世界缩放减半，
-    // 人物/敌人/武器随世界变换等比缩小一半，屏幕可见的世界范围翻倍
-    zoom = Math.min(0.5, Math.max(0.25, Math.min(vw, vh) / 2000));
+    // 人物/敌人/武器随世界变换等比缩小一半，屏幕可见的世界范围翻倍。
+    // 下限 0.35 只作用于手机（短边 <700）：0.25 时主角只有 16px 实在太小
+    zoom = Math.min(0.5, Math.max(0.35, Math.min(vw, vh) / 2000));
     worldW = vw / zoom; worldH = vh / zoom;
-    cv.width = vw * dpr; cv.height = vh * dpr;
+    cv.width = Math.round(vw * dpr); cv.height = Math.round(vh * dpr);
+    // 关键：CSS 显示尺寸必须与渲染用的 vw/vh 同步，否则 canvas 会按属性尺寸(=视口×dpr)显示
+    cv.style.width = vw + 'px'; cv.style.height = vh + 'px';
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     vignette = document.createElement('canvas');
     vignette.width = vw; vignette.height = vh;
@@ -29,6 +33,10 @@
     vx.fillStyle = g; vx.fillRect(0, 0, vw, vh);
   }
   window.addEventListener('resize', resize);
+  // 横竖屏切换：iOS Safari 触发 orientationchange 时 innerWidth/innerHeight 还没定，延迟再校一次；
+  // Android 走 screen.orientation。帧循环里还有兜底自检，任何设备漏事件都能自愈
+  window.addEventListener('orientationchange', () => { resize(); setTimeout(resize, 300); });
+  if (typeof screen !== 'undefined' && screen.orientation && screen.orientation.addEventListener) screen.orientation.addEventListener('change', resize);
   resize();
 
   const $ = id => document.getElementById(id);
@@ -220,6 +228,7 @@
   });
   window.addEventListener('keyup', e => { keys[e.code] = false; });
   // 触摸摇杆
+  const IS_TOUCH = 'ontouchstart' in window; // 手机/平板：提示文案与桌面不同
   const joy = { on: false, id: -1, ox: 0, oy: 0, x: 0, y: 0 };
   cv.addEventListener('touchstart', e => {
     onAnyInput();
@@ -246,6 +255,9 @@
   };
   cv.addEventListener('touchend', endTouch);
   cv.addEventListener('touchcancel', endTouch);
+  // iOS Safari 无视 user-scalable=no：捏合会放大页面导致画面错位，用 Safari 专有 gesture 事件拦掉
+  document.addEventListener('gesturestart', e => e.preventDefault());
+  document.addEventListener('gesturechange', e => e.preventDefault());
   let lastInputAt = 0;
   function onAnyInput() { lastInputAt = performance.now(); Sfx.ensure(); }
 
@@ -2676,7 +2688,7 @@
       ctx.font = '600 15px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
       ctx.textAlign = 'center';
       ctx.fillStyle = '#cfd0ff';
-      ctx.fillText('WASD / 方向键移动 · 武器全自动 · P 暂停 · M 静音', vw / 2, vh - 26);
+      ctx.fillText(IS_TOUCH ? '按住屏幕拖动＝摇杆移动 · 武器全自动' : 'WASD / 方向键移动 · 武器全自动 · P 暂停 · M 静音', vw / 2, vh - 26);
       ctx.restore();
     }
   }
@@ -2894,6 +2906,8 @@
   let lastT = performance.now();
   function loop(t) {
     requestAnimationFrame(loop);
+    // 视口自愈：旋转/地址栏收展/分屏拖动在某些浏览器不发 resize 事件，每帧廉价比对一次
+    if (window.innerWidth !== vw || window.innerHeight !== vh) resize();
     const realDt = Math.min(0.05, (t - lastT) / 1000);
     lastT = t;
     let dt = realDt;
