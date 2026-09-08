@@ -1,0 +1,19 @@
+{
+  "description": "喵都幸存者 微信小游戏版（H5 本体 + 适配层）",
+  "packOptions": {
+    "ignore": [
+      { "type": "folder", "value": "test" },
+      { "type": "folder", "value": "node_modules" }
+    ]
+  },
+  "setting": {
+    "es6": false,
+    "postcss": false,
+    "minified": false,
+    "urlCheck": false
+  },
+  "compileType": "game",
+  "libVersion": "3.7.1",
+  "appid": "touristappid",
+  "projectname": "meow-survivors"
+}

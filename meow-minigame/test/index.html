@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<!-- 小游戏版本地冒烟测试：wx 桩 + 真实源文件（未打包），与 bundle.js 同一加载顺序 -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>meow-minigame smoke test</title>
+<style>
+  html,body{margin:0;background:#141430;overflow:hidden}
+  #game{display:block}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+  /* rAF 接管（遮挡环境不触发原生 rAF），用 __pump 手动驱动帧循环——与网页版测试同一套路 */
+  window.__lastRaf = null;
+  window.requestAnimationFrame = function (f) { window.__lastRaf = f; return 1; };
+  window.__vt = performance.now();
+  window.__pump = function (n, stepMs) {
+    stepMs = stepMs || 33;
+    for (let i = 0; i < n; i++) {
+      window.__vt += stepMs;
+      const f = window.__lastRaf;
+      if (!f) break;
+      window.__lastRaf = null;
+      f(window.__vt);
+    }
+  };
+  window.__errs = [];
+  window.addEventListener('error', e => window.__errs.push(String(e.message)));
+</script>
+<script src="wx-stub.js"></script>
+<script src="../src/adapter.js"></script>
+<script src="../../miaomiao-deploy/js/util.js"></script>
+<script src="../../miaomiao-deploy/js/audio.js"></script>
+<script src="../../miaomiao-deploy/js/art.js"></script>
+<script src="../../miaomiao-deploy/js/maps.js"></script>
+<script src="../../miaomiao-deploy/js/game_config.js"></script>
+<script src="../../miaomiao-deploy/js/data.js"></script>
+<script src="../../miaomiao-deploy/js/changelog.js"></script>
+<script src="../../miaomiao-deploy/js/result.js"></script>
+<script src="../src/ui.js"></script>
+<script src="../src/main.js"></script>
+</body>
+</html>

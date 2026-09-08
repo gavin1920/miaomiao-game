@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<!-- 打包产物验证：只加载 bundle.js（与微信开发者工具运行的文件完全一致） -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>meow-minigame bundle test</title>
+<style>html,body{margin:0;background:#141430;overflow:hidden}#game{display:block}</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+  window.__lastRaf = null;
+  window.requestAnimationFrame = function (f) { window.__lastRaf = f; return 1; };
+  window.__vt = performance.now();
+  window.__pump = function (n, stepMs) {
+    stepMs = stepMs || 33;
+    for (let i = 0; i < n; i++) {
+      window.__vt += stepMs;
+      const f = window.__lastRaf;
+      if (!f) break;
+      window.__lastRaf = null;
+      f(window.__vt);
+    }
+  };
+  window.__errs = [];
+  window.addEventListener('error', e => window.__errs.push(String(e.message)));
+</script>
+<script src="wx-stub.js"></script>
+<script src="../bundle.js"></script>
+</body>
+</html>
