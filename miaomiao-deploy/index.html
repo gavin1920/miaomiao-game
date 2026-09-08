@@ -76,6 +76,31 @@
   .help-list b{color:#e2637f}
   .key{display:inline-block;background:#ffe9c4;border:2px solid #e8c890;border-bottom-width:4px;
     border-radius:8px;padding:0 8px;font-size:14px;margin:0 2px}
+  /* ---------- 📜 更新日志 ---------- */
+  #btn-log{position:relative}
+  #btn-log.has-new::after{content:'NEW';position:absolute;top:-9px;right:-4px;background:#ff5d7e;color:#fff;
+    font-size:11px;padding:2px 8px;border-radius:999px;border:2px solid #fff;letter-spacing:1px;
+    box-shadow:0 2px 0 rgba(40,24,60,.25);animation:wiggle 1.6s ease-in-out infinite}
+  #log-panel{width:min(92vw,560px);max-height:88vh;display:flex;flex-direction:column}
+  /* body 全局 touch-action:none 会沿父链禁掉触摸滚动，看日志时放开纵向 */
+  body.log-open{touch-action:pan-y}
+  #log-list{overflow-y:auto;text-align:left;margin-top:12px;padding-right:4px;min-height:60px}
+  .log-entry{background:#fff;border:3px solid #ffe1b0;border-radius:18px;padding:10px 14px 12px;
+    box-shadow:0 4px 0 rgba(40,24,60,.10);margin-bottom:12px}
+  .log-entry.newest{border-color:var(--pink);box-shadow:0 0 12px rgba(255,143,181,.5),0 4px 0 rgba(40,24,60,.10)}
+  .log-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .log-date{font-size:15px;color:#c47b1e;letter-spacing:1px}
+  .log-ver{font-size:12px;color:#6b4fa0;background:#f3e6ff;border-radius:999px;padding:2px 10px}
+  .log-new{font-size:12px;color:#fff;background:var(--pink);border-radius:999px;padding:2px 10px;
+    animation:wiggle 1.6s ease-in-out infinite}
+  .log-title{font-size:18px;margin-top:3px;letter-spacing:1px}
+  .log-item{display:flex;gap:8px;align-items:flex-start;margin-top:7px;font-size:14.5px;line-height:1.55;color:#6d5a52}
+  .log-tag{flex:none;font-size:12px;border-radius:8px;padding:2px 9px;margin-top:1px;border:2px solid #fff;
+    letter-spacing:1px;box-shadow:0 2px 0 rgba(40,24,60,.12)}
+  .log-tag.new{background:var(--green);color:#245c1d}
+  .log-tag.opt{background:var(--cyan-d);color:#fff}
+  .log-tag.bal{background:#f0b13c;color:#5c3a08}
+  .log-tag.fix{background:var(--pink);color:#fff}
   /* ---------- 升级 3 选 1 ---------- */
   #screen-levelup{gap:20px}
   #lvl-title{color:#fff;font-size:clamp(26px,5vw,40px);letter-spacing:6px;
@@ -215,6 +240,7 @@
     <div class="btnrow">
       <button class="btn" id="btn-start">开始夜巡 !</button>
       <button class="btn secondary" id="btn-help">玩法说明</button>
+      <button class="btn secondary" id="btn-log">📜 更新日志</button>
     </div>
     <div id="menu-hint">WASD / 方向键 移动 · 武器全自动 · P 暂停 · M 静音</div>
   </div>
@@ -304,6 +330,15 @@
   </div>
 </div>
 
+<!-- 📜 更新日志（数据在 js/changelog.js，新版本自动弹最新一期） -->
+<div id="screen-log" class="overlay dim hidden">
+  <div id="log-panel" class="panel ears">
+    <div style="font-size:26px;letter-spacing:3px">📜 更新日志</div>
+    <div id="log-list"></div>
+    <div class="btnrow" style="margin-top:4px"><button class="btn small" id="btn-log-close">知道啦！</button></div>
+  </div>
+</div>
+
 <!-- ⚙ 平衡设置侧栏 -->
 <div id="screen-cfg" class="hidden">
   <div id="cfg-drawer">
@@ -331,14 +366,16 @@
 
 <div class="credit">原创程序美术 &amp; 合成音乐 · 猫叫采样授权见 assets/meow/CREDITS.md · 灵感致敬 Vampire Survivors</div>
 
-<script src="js/util.js?v=20260908a"></script>
-<script src="js/audio.js?v=20260908a"></script>
-<script src="js/art.js?v=20260908a"></script>
-<script src="js/maps.js?v=20260908a"></script>
-<script src="js/game_config.js?v=20260908a"></script>
-<script src="js/data.js?v=20260908a"></script>
-<script src="js/config_panel.js?v=20260908a"></script>
-<script src="js/result.js?v=20260908a"></script>
-<script src="js/main.js?v=20260908a"></script>
+<script src="js/util.js?v=20260908d"></script>
+<script src="js/audio.js?v=20260908d"></script>
+<script src="js/art.js?v=20260908d"></script>
+<script src="js/maps.js?v=20260908d"></script>
+<script src="js/game_config.js?v=20260908d"></script>
+<script src="js/data.js?v=20260908d"></script>
+<script src="js/config_panel.js?v=20260908d"></script>
+<script src="js/result.js?v=20260908d"></script>
+<script src="js/changelog.js?v=20260908d"></script>
+<script src="js/changelog_ui.js?v=20260908d"></script>
+<script src="js/main.js?v=20260908d"></script>
 </body>
 </html>

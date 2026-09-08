@@ -1302,21 +1302,25 @@
       if (curMap) curMap.moveActor(e, mdx, mdy, false);
       else { e.x += mdx; e.y += mdy; }
       e.kx *= 1 - Math.min(1, dt * 7); e.ky *= 1 - Math.min(1, dt * 7);
+      // 精英/批次头目卡墙自救：批次头目到不了主角面前 → 波次永远无法推进，必须兜底
+      if (e.elite) bossUnstuck(e, dist, dt);
       // 碰撞玩家
       if (!e.dieDone && pd2 < (e.r + P.r) * (e.r + P.r)) {
         damagePlayer(e.dmg);
       }
     }
   }
-  // Boss/老鼠妈妈卡墙自救：视野扩大后生成距离翻倍，直线追人容易被楼房卡死——
-  // 每秒抽查一次位移，连续卡住且离主角还远时，就地"抄近路"绕到主角附近（带传送演出）
+  // Boss/精英/老鼠妈妈卡墙自救：视野扩大后生成距离翻倍，直线追人容易被楼房卡死——
+  // 每秒抽查一次位移，连续卡住且离主角还远时，就地"抄近路"绕到主角附近（带传送演出）。
+  // 位移阈值按自身移速缩放：蜗牛系精英移速只有 ~18px/s，固定阈值会把正常移动误判成卡死
   function bossUnstuck(e, dist, dt) {
     e.chkT = (e.chkT || 0) - dt;
     if (e.chkT > 0) return;
     e.chkT = 1;
     const moved = e.chkX != null ? Math.hypot(e.x - e.chkX, e.y - e.chkY) : 999;
     e.chkX = e.x; e.chkY = e.y;
-    if (moved >= 26 || dist < 220) { e.stuckN = 0; return; }
+    const expect = Math.max(24, e.spd * (e.slowF || 1) * (curMap ? curMap.speedAt(e.x, e.y) : 1));
+    if (moved >= expect * 0.4 || dist < 220) { e.stuckN = 0; return; }
     e.stuckN = (e.stuckN || 0) + 1;
     if (e.stuckN < 2) return; // 连续 2 秒几乎没挪动才判定卡死
     e.stuckN = 0;
