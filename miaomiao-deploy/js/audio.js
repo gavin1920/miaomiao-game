@@ -353,7 +353,7 @@ const Sfx = (() => {
     return true;
   }
   const sfx = {};
-  for (const k in sfxRaw) sfx[k] = function () { if (allowSfx(k)) sfxRaw[k](); };
+  for (const k in sfxRaw) sfx[k] = function (...a) { if (allowSfx(k)) sfxRaw[k](...a); };
 
   return { ensure, setMuted, isMuted: () => muted, meow, bgmStart, bgmStop, sfx, sfxRate: () => sfxRateV, sampleCount: () => sampleBufs.size };
 })();
