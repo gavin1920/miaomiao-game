@@ -90,6 +90,13 @@ for (const m0 of MAPS.list) {
   const s = m.start;
   const sCode = m.code(s.x, s.y);
   if (sCode === T.BLOCK) { console.error(`✗ ${m.meta.name}: 出生点在阻挡物里！`); failed = true; }
+  // 中心格可走不代表玩家能站：free() 的四周探测点可能落进邻近阻挡（贴墙/过窄开局就卡死）。
+  // 用玩家身体碰撞复检：13 ≈ 玩家半径 16 × 0.8，与 main.js moveActor 一致
+  const spawnFree = m.free(s.x, s.y, true, 13);
+  if (!spawnFree) {
+    console.error(`✗ ${m.meta.name}: 出生点过窄/贴墙（free() 失败），开局会被卡住`);
+    failed = true;
+  }
   // 洪泛（可走 + 减速 + 猫道，从出生点）
   const seen = new Uint8Array(grid.length);
   const q = [[Math.floor(s.x / CELL), Math.floor(s.y / CELL)]];
@@ -121,7 +128,7 @@ for (const m0 of MAPS.list) {
     catOk = false; failed = true;
     break;
   }
-  const ok = pct >= 92 && pctWalk >= 90 && pctSlow >= 88 && catOk && sCode !== T.BLOCK;
+  const ok = pct >= 92 && pctWalk >= 90 && pctSlow >= 88 && catOk && sCode !== T.BLOCK && spawnFree;
   if (!ok) failed = true;
   console.log(`${ok ? '✓' : '✗'} ${m.meta.emoji} ${m.meta.name} [${m.w}×${m.h}] ` +
     `可走${(pctWalk).toFixed(1)}% 减速${(pctSlow).toFixed(1)}% 猫道${catN}格 总连通${pct.toFixed(1)}% ` +

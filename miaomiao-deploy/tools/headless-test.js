@@ -129,6 +129,24 @@ const CFGOK = (() => {
   if (c.growth.roundHpMul !== 3 || c.growth.roundDmgMul !== 2 || Math.abs(c.growth.roundSpdMul - 1.1) > 1e-9) throw new Error('轮间指数成长配置缺失');
   // 意见3（第二版）：老鼠妈妈 500 万血 / 移速 100
   if (c.enemies.mother.hp !== 5000000 || c.enemies.mother.spd !== 100) throw new Error('老鼠妈妈应为 500 万血 / 移速 100');
+  // 意见6/7（第三版）：敌人行为特性 + 精英宝箱概率配置
+  if (!c.enemyTraits || !c.enemyTraits.dash || !c.enemyTraits.ranged || !c.enemyTraits.steal || !c.enemyTraits.slime)
+    throw new Error('enemyTraits 特性参数缺失');
+  if (!c.enemies.calico.dash || !c.enemies.pigeon.ranged || !c.enemies.raccoon.steal || !c.enemies.snail.slime)
+    throw new Error('敌人行为特性标记缺失');
+  if (DATA.ENEMIES.calico.dash !== 1 || DATA.ENEMIES.snail.slime !== 1) throw new Error('特性标记未装配进 DATA.ENEMIES');
+  if (typeof DATA.CFG.enemyTraits.slime.slow !== 'number') throw new Error('黏液减速参数未装配');
+  if (c.elite.chestBase !== 0.5 || c.elite.chestLuck !== 0.06) throw new Error('精英宝箱概率配置缺失');
+  // 老版导出配置（无特性标记）走真实 data.js 装配应被逐项兜底，不丢行为
+  {
+    const ctx3 = { window: { GAME_CONFIG: { enemies: { snail: { hp: 55 } } } } };
+    vm.createContext(ctx3);
+    vm.runInContext(fs.readFileSync(path.join(ROOT, 'js', 'data.js'), 'utf8'), ctx3, { filename: 'data-oldcfg.js' });
+    const D3 = vm.runInContext('({ DATA })', ctx3).DATA;
+    if (D3.ENEMIES.snail.slime !== 1 || D3.ENEMIES.snail.hp !== 55) throw new Error('老配置特性兜底失效');
+    if (!D3.CFG.enemyTraits || !D3.CFG.enemyTraits.dash) throw new Error('老配置缺 enemyTraits 时未用默认兜底');
+    if (D3.CFG.elite.chestBase !== 0.5) throw new Error('老配置缺 elite.chestBase 时未用默认兜底');
+  }
   // 意见1：v3 分段抛物线升级曲线（30 级前与旧曲线一致，30/40/50 台阶变慢，50 级起每 10 级更慢）
   const XP3 = [[10, 97], [20, 208], [30, 395], [40, 741], [50, 1501], [60, 2367], [70, 3677],
     [80, 5655], [90, 8640], [100, 13132], [110, 19872], [120, 29961], [150, 100815]];
