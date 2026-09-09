@@ -3517,7 +3517,7 @@
     ctx.drawImage(vignette, 0, 0);
     // 主视觉猫（摆尾 / 挥爪 / 眨眼）
     const mc = $('menu-art').getContext('2d');
-    mc.imageSmoothingEnabled = false;
+    mc.imageSmoothingEnabled = true; // 4x 烘焙猫平滑缩放（绘本风非像素精灵；关平滑会锯齿糊）
     mc.clearRect(0, 0, 640, 560);
     const blink = (G.realTime % 4.6) < 0.14;
     const frame = Math.floor(G.realTime * 1.6) % 2;

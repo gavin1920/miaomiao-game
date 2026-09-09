@@ -125,6 +125,7 @@ const MUI = (() => {
     const cs = vh * 0.4;
     x.save();
     x.globalAlpha = 0.95;
+    x.imageSmoothingEnabled = true; // 4x 烘焙猫平滑缩放（绘本风非像素精灵；最近邻会锯齿糊）
     x.drawImage(blink ? Art.menuCatBlink : mc, vw * 0.02, vh - cs * 0.78, cs, cs);
     x.restore();
     // 地图选择

@@ -396,8 +396,11 @@ const Art = (() => {
       x.restore();
     }
   }
-  const menuCat = [0, 1].map(t => bake2(150, 150, x => { x.translate(58, 66); x.scale(1.02, 1.02); drawMenuCat(x, { tail: t, wave: t === 1, heart: t === 1 }); }));
-  const menuCatBlink = bake2(150, 150, x => { x.translate(58, 66); x.scale(1.02, 1.02); drawMenuCat(x, { tail: 0, blink: true }); });
+  // 主视觉猫 4x 烘焙（600px）：真机高分屏上被拉伸到 >300 物理px，2x 烘焙会糊；
+  // 绘制侧（H5 #menu-art / 小游戏 MUI）用平滑采样缩到目标尺寸，保持绘本风干净边缘
+  const menuCatBake4 = fn => bake(600, 600, x => { x.scale(4, 4); fn(x, 150, 150); });
+  const menuCat = [0, 1].map(t => menuCatBake4(x => { x.translate(58, 66); x.scale(1.02, 1.02); drawMenuCat(x, { tail: t, wave: t === 1, heart: t === 1 }); }));
+  const menuCatBlink = menuCatBake4(x => { x.translate(58, 66); x.scale(1.02, 1.02); drawMenuCat(x, { tail: 0, blink: true }); });
 
   /* ============================================================
      敌人：绘本风重制（64 单位空间；每只 4 帧：走A/走B/眨眼/惊讶）

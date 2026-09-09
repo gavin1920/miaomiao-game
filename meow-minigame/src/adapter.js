@@ -89,7 +89,9 @@
     real.w = Math.max(1, real.w); real.h = Math.max(1, real.h);
     view.vh = VH;
     view.vw = Math.round(VH * (real.w / real.h));
-    view.dpr = (real.w * Math.min(2, real.dpr || 2)) / view.vw;
+    /* 渲染精度：封顶 3x（此前 2x 会让 3x 屏以 2/3 物理分辨率渲染再拉伸 1.5 倍，
+       全局发虚——真机反馈"首页猫模糊/整体发糊"的总根因）。3x = backing 与物理像素 1:1。 */
+    view.dpr = (real.w * Math.min(3, real.dpr || 2)) / view.vw;
     view.kx = view.vw / real.w;
     view.ky = view.vh / real.h;
     return true;
