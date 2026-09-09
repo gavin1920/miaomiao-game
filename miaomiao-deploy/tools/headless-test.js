@@ -550,10 +550,14 @@ const LOT = MS.DATA.CFG.lottery;
 if (!LOT || !Array.isArray(LOT.tiers) || LOT.tiers.length !== 6) throw new Error('lottery 档位表未装配');
 const TIERS0 = LOT.tiers;
 // 隔离装置：清空武器（无击杀→无噪音掉落）、无敌帧（防围殴）、清场
+// （清怪防挤开：高轮次压力波会把玩家撞出 26px 拾取圈，金币装置曾偶发拾取失败）
 const isoSetup = () => {
   G().player.weapons = []; MS.calcMods();
   G().player.hp = G().player.maxHp; G().player.iframes = 99999;
   G().gems.length = 0; G().pickups.length = 0;
+  G().enemies.length = 0; G().projs.length = 0;
+  // 松开此前场景遗留的方向键（如吃宝箱时的 KeyD）：玩家原地不动，金币才稳定落在拾取圈内
+  for (const k of ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']) key(k, false);
 };
 // 80% 封顶档：概率拉满 → 单枚金币 = 当前等级所需 × 80%（实际到账再乘经验乘数 xpMul）
 isoSetup();
@@ -658,10 +662,13 @@ if (!(G().player.disarmT > G().player.stunT)) throw new Error('全屏斩未附�
 console.log('✓ 全屏斩：体力 ' + Math.round(hp0) + ' → ' + G().player.hp + '（扣当前 50%、保底生效）+ 眩晕/缴械/减速链');
 // 讨伐 → 掉落 30 金币 + 专属宝箱（必 5 件、无金币）→ 成功结算 →「继续夜巡」无缝进第 4 轮
 const momNow = G().enemies.find(e => e.mother && !e.dieDone);
-G().player.x += 600; // 拉开距离：演出期不顺路开箱/吸币，掉落断言才隔离
+// 演出期彻底隔离拾取：把主角临时挪出世界（+600px 仍可能被吸走靠近的金币，曾致 28/30 偶发），断言完再还原
+const px0 = G().player.x, py0 = G().player.y;
+G().player.x = -99999; G().player.y = -99999;
 MS.hitEnemy(momNow, 1e9);
 pump(0.4, { keepAlive: keepMother });
 const coinDrops = G().pickups.filter(p => p.kind === 'coin').length;
+G().player.x = px0; G().player.y = py0;
 if (coinDrops < 30) throw new Error('老鼠妈妈死后应掉落 30 枚金币: ' + coinDrops);
 const momChest = G().chests.find(c => c.mother);
 if (!momChest) throw new Error('老鼠妈妈死后应掉落专属宝箱');
@@ -751,6 +758,8 @@ click('btn-again');
 waitForState('play', 3, '再来一局');
 const dismiss = () => { if (state() === 'levelup') key('Digit1'); };
 pump(20, { keepAlive: dismissLevelup }); // 先打一会儿，让伤害统计有数据（新局前几秒敌人还在路上）
+// 敌人从屏边走进需要时间且随刷怪顺序浮动：有界等待伤害发生，避免"恰好 20 秒还没接战"的随机误报
+for (let i = 0; i < 40 && !(G().dmgTotal > 0); i++) pump(1, { keepAlive: dismissLevelup });
 const dmgBefore = G().dmgTotal;
 if (!(dmgBefore > 0)) throw new Error('20 秒战斗后总伤害统计仍为 0');
 if (!(G().peakSec >= 0 && G().secDmg >= 0)) throw new Error('秒伤统计字段缺失');

@@ -8,6 +8,12 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&display=swap" rel="stylesheet">
 <style>
+  /* 像素字体(实机同款,OFL):VI 手册 v2.1 指定 UI 字体 */
+  @font-face {
+    font-family: 'Fusion Pixel';
+    src: url('assets/fonts/fusion-pixel-12px-monospaced-zh_hans.ttf.woff2') format('woff2');
+    font-display: swap;
+  }
   :root{
     --night:#141430; --cream:#fff8ec; --cream2:#ffefd6; --ink:#5b4a44;
     --pink:#ff8fb5; --pink-d:#e0678f; --cyan:#7de3e0; --cyan-d:#4fb3b0;
@@ -17,7 +23,7 @@
   *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   [hidden]{display:none !important} /* hidden 属性优先于 .btn 等类的 display，防失败结算误显「继续夜巡」 */
   html,body{width:100%;height:100%;overflow:hidden;background:var(--night);
-    font-family:"ZCOOL KuaiLe","Microsoft YaHei","PingFang SC",sans-serif;color:var(--ink);
+    font-family:'Fusion Pixel','ZCOOL KuaiLe','Microsoft YaHei','PingFang SC',sans-serif;color:var(--ink);
     user-select:none;-webkit-user-select:none;touch-action:none}
   /* canvas 必须显式约束 CSS 尺寸：否则显示尺寸=属性尺寸(=视口×dpr)，手机上会放大 dpr 倍溢出屏幕 */
   #game{position:absolute;inset:0;width:100%;height:100%;display:block}
@@ -71,8 +77,12 @@
   .map-chip.on{border-color:var(--pink);box-shadow:0 0 14px rgba(255,143,181,.55),0 4px 0 rgba(40,24,60,.4)}
   .map-pv{width:84px;height:63px;border-radius:8px;display:block;image-rendering:pixelated;background:#191c2c}
   .map-nm{color:#ffe9c4;font-size:13px;letter-spacing:1px;text-shadow:0 1px 2px #000;white-space:nowrap}
-  #help-panel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:12}
-  .help-list{text-align:left;font-size:17px;line-height:2;margin:10px 0 4px}
+  #help-panel{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:12;
+    width:min(92vw,560px);max-height:min(80vh,720px);display:flex;flex-direction:column;overflow:hidden;
+    touch-action:pan-y}
+  #help-panel>*{flex:none} /* 标题/按钮固定，面板超高时只在 .help-list 内部滚动兜底 */
+  .help-list{text-align:left;font-size:17px;line-height:2;margin:10px 0 4px;flex:1 1 auto;min-height:0;
+    overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;-webkit-overflow-scrolling:touch}
   .help-list b{color:#e2637f}
   .key{display:inline-block;background:#ffe9c4;border:2px solid #e8c890;border-bottom-width:4px;
     border-radius:8px;padding:0 8px;font-size:14px;margin:0 2px}
@@ -81,14 +91,20 @@
   #btn-log.has-new::after{content:'NEW';position:absolute;top:-9px;right:-4px;background:#ff5d7e;color:#fff;
     font-size:11px;padding:2px 8px;border-radius:999px;border:2px solid #fff;letter-spacing:1px;
     box-shadow:0 2px 0 rgba(40,24,60,.25);animation:wiggle 1.6s ease-in-out infinite}
-  /* 面板限高 + 列表 flex:1/min-height:0：条目再多也只在列表内部滚动，按钮行固定在底部 */
-  #log-panel{width:min(92vw,560px);max-height:90vh;display:flex;flex-direction:column;overflow:hidden}
+  /* 面板固定 70% 屏高（overlay flex 自动垂直居中）；条目整列上下滚动，不出现滚动条 */
+  #log-panel{width:min(92vw,560px);height:70vh;display:flex;flex-direction:column;overflow:hidden}
   #log-panel .btnrow{flex:none}
   /* body 全局 touch-action:none 会沿父链禁掉触摸滚动，看日志时放开纵向（滚动容器自身也要放开，手机才能划动） */
   body.log-open{touch-action:pan-y}
   #screen-log{touch-action:pan-y}
+  /* 玩法说明打开时同理放开纵向触摸（body 全局 touch-action:none 会沿父链禁掉触摸滚动） */
+  body.help-open{touch-action:pan-y}
+  /* 隐藏滚动条（Firefox: scrollbar-width / WebKit: ::-webkit-scrollbar），滚轮+触屏+鼠标拖拽都能滚 */
   #log-list{flex:1 1 auto;min-height:60px;overflow-y:auto;text-align:left;margin-top:12px;padding-right:4px;
-    overscroll-behavior:contain;touch-action:pan-y;-webkit-overflow-scrolling:touch}
+    overscroll-behavior:contain;touch-action:pan-y;-webkit-overflow-scrolling:touch;
+    scrollbar-width:none;cursor:grab}
+  #log-list.dragging{cursor:grabbing}
+  #log-list::-webkit-scrollbar{display:none}
   .log-entry{background:#fff;border:3px solid #ffe1b0;border-radius:18px;padding:10px 14px 12px;
     box-shadow:0 4px 0 rgba(40,24,60,.10);margin-bottom:12px}
   .log-entry.newest{border-color:var(--pink);box-shadow:0 0 12px rgba(255,143,181,.5),0 4px 0 rgba(40,24,60,.10)}
@@ -154,6 +170,24 @@
   .reward canvas{width:44px;height:44px;flex:none}
   .reward .rname{font-size:18px}
   .reward .rdesc{font-size:13.5px;color:#96806f}
+  /* ---------- 宝箱 · 老虎机演出（第五版意见1 追加；!important 用于压过下方主题区的同名 !important 规则） ---------- */
+  #chest-fx{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:12}
+  #chest-fx.world{position:fixed;z-index:25} /* 金币头奖：临时挂到 body 上的世界层用法 */
+  #chest-icon.suspense{animation:chestShakeFast .46s linear infinite} /* 开箱悬念：摇晃加速 */
+  @keyframes chestShakeFast{0%,100%{transform:rotate(0) scale(1)}25%{transform:rotate(-9deg) scale(1.05)}50%{transform:rotate(8deg) scale(1.02)}75%{transform:rotate(-5deg) scale(1.06)}}
+  #chest-rays.rays-fast{animation:spin 2.4s linear infinite} /* 滚动中：光圈加速 */
+  #chest-rays.rays-gold{animation:spin .8s linear infinite; /* 大奖：金光疯狂旋转 */
+    background:repeating-conic-gradient(rgba(255,224,130,.55) 0 9deg, rgba(255,200,80,.08) 9deg 24deg);
+    filter:drop-shadow(0 0 18px rgba(255,210,90,.8))}
+  .reward.rolling{animation:none;opacity:.55;filter:saturate(.5) brightness(.92)} /* 滚动中：整行压暗 */
+  .reward.landed{animation:rewardLand .5s cubic-bezier(.34,1.56,.64,1) both} /* 落定：弹跳亮起 */
+  @keyframes rewardLand{0%{transform:scale(.65) rotate(-2deg);opacity:.6}55%{transform:scale(1.06) rotate(1deg)}100%{transform:scale(1)}}
+  .reward.landed.rare{border-color:#ffd34d !important;box-shadow:0 0 16px rgba(255,211,77,.85),0 4px 0 rgba(40,24,60,.10)}
+  .reward.landed.big{border-color:#ffb54d !important;box-shadow:0 0 22px rgba(255,170,60,.95),0 4px 0 rgba(40,24,60,.10)}
+  #chest-title.super{color:#e05656 !important;text-shadow:0 0 14px rgba(255,200,90,.75);animation:wiggle 1.1s ease-in-out infinite}
+  #chest-panel.quake{animation:chestQuake .55s linear} /* 大奖震屏（DOM 抖动，不碰游戏世界） */
+  @keyframes chestQuake{0%,100%{transform:none}15%{transform:translate(-7px,4px) rotate(-.7deg)}30%{transform:translate(6px,-5px) rotate(.6deg)}45%{transform:translate(-5px,-3px)}60%{transform:translate(5px,4px) rotate(.5deg)}75%{transform:translate(-3px,2px)}}
+  #btn-chest-ok.skip{filter:saturate(.35) brightness(.96)} /* 演出中按钮呈「跳过」态 */
   /* ---------- 结算 / 暂停 ---------- */
   #screen-over .panel{padding:20px 26px 18px}
   .stat-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;
@@ -187,7 +221,6 @@
   .chip.stamp{border-color:#e8b96a;background:linear-gradient(180deg,#fff6df,#ffe9bd)}
   .chip.stamp .lv{background:linear-gradient(180deg,#ffd98a,#f0b13c);color:#5c3a08}
   #pause-title{font-size:34px;letter-spacing:8px;color:#8a6fb8}
-  .mute-row{margin-top:14px}
   .best-line{color:#fff;font-size:16px;letter-spacing:2px;text-shadow:0 2px 4px #000;margin-top:4px}
   .credit{position:absolute;bottom:10px;right:14px;color:rgba(255,255,255,.4);font-size:12px;letter-spacing:1px;z-index:11}
   /* ---------- ⚙ 平衡设置（侧栏面板） ---------- */
@@ -196,18 +229,11 @@
     box-shadow:0 5px 0 #7a5fc0,0 8px 16px rgba(0,0,0,.3);transition:transform .1s;font-family:inherit}
   #btn-cfg:hover{transform:translateY(-2px) rotate(30deg)}
   #btn-cfg:active{transform:translateY(3px)}
-  /* ---------- 🔍 缩放 / ⏩ 加速（游戏中可见，主菜单隐藏） ---------- */
-  #btn-zoom,#btn-speed{position:fixed;right:12px;z-index:20;width:46px;height:46px;border:none;cursor:pointer;
-    border-radius:50%;color:#fff;font-family:inherit;font-size:14px;line-height:1;letter-spacing:0;
-    transition:transform .1s;text-shadow:0 1px 0 rgba(0,0,0,.25)}
-  #btn-zoom{top:118px;background:linear-gradient(180deg,#9fdcf2,#4fa8c8);box-shadow:0 4px 0 #2f7f9a,0 8px 16px rgba(0,0,0,.3)}
-  #btn-speed{top:172px;background:linear-gradient(180deg,#ffd98a,#f0a53c);box-shadow:0 4px 0 #b8741e,0 8px 16px rgba(0,0,0,.3)}
-  #btn-zoom:hover,#btn-speed:hover{transform:translateY(-2px)}
-  #btn-zoom:active,#btn-speed:active{transform:translateY(3px)}
   #screen-cfg{position:fixed;inset:0;z-index:30;background:rgba(10,8,30,.45);backdrop-filter:blur(2px)}
   #cfg-drawer{position:absolute;top:0;right:0;bottom:0;width:min(600px,94vw);display:flex;flex-direction:column;
     background:linear-gradient(180deg,#fffdf6,#ffefd6);border-left:6px solid #ffd9a0;
-    box-shadow:-14px 0 40px rgba(0,0,0,.4);padding:18px 20px;animation:slideIn .25s cubic-bezier(.34,1.2,.64,1)}
+    box-shadow:-14px 0 40px rgba(0,0,0,.4);padding:18px 20px;overflow-y:auto;
+    animation:slideIn .25s cubic-bezier(.34,1.2,.64,1)}
   @keyframes slideIn{from{transform:translateX(60px);opacity:0}to{transform:none;opacity:1}}
   #cfg-head{font-size:24px;color:#7a5fc0;letter-spacing:2px;text-align:center}
   #cfg-desc{font-size:13.5px;color:#96806f;line-height:1.7;margin:8px 0 10px;text-align:left;
@@ -218,7 +244,7 @@
     border-radius:999px;padding:7px 18px;background:#f3e6ff;color:#6b4fa0;box-shadow:0 4px 0 #d9c8f2;transition:transform .08s}
   #cfg-presets button:active{transform:translateY(3px);box-shadow:0 1px 0 #d9c8f2}
   #cfg-presets button.on{background:linear-gradient(180deg,#cbb7f5,#9d82e0);color:#fff;box-shadow:0 4px 0 #7a5fc0}
-  #cfg-text{flex:1;width:100%;resize:none;border:3px solid #e8d9ff;border-radius:14px;background:#2a2440;color:#d8ccff;
+  #cfg-text{flex:1;min-height:120px;width:100%;resize:none;border:3px solid #e8d9ff;border-radius:14px;background:#2a2440;color:#d8ccff;
     font:12.5px/1.55 Consolas,"Courier New",monospace;padding:12px;white-space:pre;outline:none}
   #cfg-src{font-size:13px;color:#8a6fb8;margin-top:8px;min-height:18px;text-align:center}
   #cfg-btns{display:flex;gap:12px;justify-content:center;margin-top:8px}
@@ -226,9 +252,125 @@
     .card{width:min(44vw,180px)}
     #menu-art{top:12vh;width:min(38vh,230px)}
     #btn-cfg{top:60px;right:8px}
-    #btn-zoom{top:114px;right:8px}
-    #btn-speed{top:168px;right:8px}
   }
+  /* ==================== 像素美术覆盖 v2.2（可爱像素 · VI 手册预演） ====================
+     骨（承 v2.1）：墨 #453244 唯一描边 2~3px · 硬偏移阴影 · 蛋壳/奶油底 ·
+       项圈红 #e05656 主行动 · 铃铛金 #ffd76e 次级 · 天蓝 #6cc8ff · 苔绿 #7de89a。
+     肉（v2.2 可爱化）：直角一律消灭 —— 面板圆角 24px / 卡片 22px / 按钮胶囊 999px /
+       小徽章 8~12px；奶油渐变回归并与墨线共存 + 内侧 2px 奶白描边；恢复猫耳；
+       悬停轻微上浮、按下压平硬阴影 —— 「圆角身板 + 像素骨感」。 */
+  body{color:#453244;}
+  canvas{image-rendering:pixelated;}
+  /* ---- 面板：奶油渐变 + 墨线 + 内奶白描边 + 猫耳 ---- */
+  .panel{background:linear-gradient(180deg,#fffdf6,#ffefd6) !important;border:3px solid #453244 !important;
+    border-radius:24px !important;
+    box-shadow:5px 6px 0 rgba(30,20,30,.35), inset 0 0 0 2px #fff6e0 !important;}
+  .panel.ears::before,.panel.ears::after{background:#ffefd6 !important;border:3px solid #453244 !important;
+    border-radius:14px 4px 14px 4px !important;box-shadow:inset 0 0 0 2px #fff6e0 !important;}
+  h1.title{text-shadow:3px 3px 0 #e05656,6px 6px 0 rgba(20,14,26,.4) !important;}
+  .subtitle{color:#6cc8ff !important;text-shadow:2px 2px 0 rgba(20,14,26,.6) !important;}
+  /* ---- 按钮：胶囊 + 渐变 + 墨线 + 0 4px 硬阴影，悬停上浮 / 按下压平 ---- */
+  .btn{background:linear-gradient(180deg,#ff7d8e,#e05656) !important;color:#fff6e0 !important;
+    border:3px solid #453244 !important;border-radius:999px !important;
+    box-shadow:0 4px 0 #453244 !important;text-shadow:none !important;letter-spacing:2px !important;}
+  .btn:hover{transform:translateY(-2px) !important;filter:brightness(1.07) !important;}
+  .btn:active{transform:translateY(4px) !important;box-shadow:0 0 0 #453244 !important;}
+  .btn.secondary{background:linear-gradient(180deg,#ffe9a8,#ffd76e) !important;color:#453244 !important;text-shadow:none !important;}
+  .btn.secondary:active{box-shadow:0 0 0 #453244 !important;}
+  .btn.small{padding:8px 20px !important;font-size:15px !important;}
+  #menu-hint{animation:hintfade 14s forwards;}
+  @keyframes hintfade{to{opacity:0;visibility:hidden}}
+  /* ---- 地图选择卡 ---- */
+  .map-chip{background:#2e2a3c !important;border:2px solid #453244 !important;border-radius:14px !important;
+    box-shadow:3px 4px 0 rgba(20,14,26,.4) !important;}
+  .map-chip:hover{transform:translateY(-3px) !important;}
+  .map-chip.on{border-color:#e05656 !important;box-shadow:0 0 10px rgba(224,86,86,.5),3px 4px 0 rgba(20,14,26,.4) !important;}
+  /* ---- 玩法说明 / 按键 ---- */
+  .help-list b{color:#e05656 !important;}
+  .key{background:#fff6e0 !important;color:#453244 !important;border:2px solid #453244 !important;
+    border-bottom-width:4px !important;border-radius:8px !important;}
+  /* #help-panel 靠 translate(-50%,-50%) 居中：pop 动画的 transform 会覆盖它导致弹出瞬间偏移，
+     换用带位移的专用弹出动画（原地 pop，不再从右下角飘入） */
+  @keyframes popC{from{transform:translate(-50%,-50%) scale(.7);opacity:0}to{transform:translate(-50%,-50%) scale(1);opacity:1}}
+  #help-panel{animation:popC .32s cubic-bezier(.34,1.56,.64,1) !important;}
+  /* ---- 📜 更新日志（一页一期 · 翻页圆点） ---- */
+  .log-entry{background:linear-gradient(180deg,#fffdf6,#fff6e0) !important;border:2px solid #453244 !important;
+    border-radius:16px !important;box-shadow:3px 4px 0 rgba(69,50,68,.18) !important;}
+  .log-entry.newest{border-color:#e05656 !important;box-shadow:0 0 10px rgba(224,86,86,.35),3px 4px 0 rgba(69,50,68,.18) !important;}
+  .log-ver{background:#f2e8d8 !important;color:#453244 !important;border:2px solid rgba(69,50,68,.4) !important;border-radius:999px !important;}
+  .log-new{background:#e05656 !important;color:#fff6e0 !important;border:2px solid #453244 !important;border-radius:999px !important;}
+  .log-tag{border-radius:9px !important;border:2px solid #453244 !important;color:#453244 !important;
+    box-shadow:2px 2px 0 rgba(69,50,68,.25) !important;}
+  .log-tag.new{background:#7de89a !important;color:#453244 !important;}
+  .log-tag.opt{background:#6cc8ff !important;color:#453244 !important;}
+  .log-tag.bal{background:#ffd76e !important;color:#453244 !important;}
+  .log-tag.fix{background:#ff8fb5 !important;color:#453244 !important;}
+  /* ---- 升级 3 选 1 卡片：蛋壳渐变 + 爪印角饰 + hover 上浮小旋转 ---- */
+  #lvl-title{text-shadow:3px 3px 0 #e05656,6px 6px 0 rgba(20,14,26,.4) !important;}
+  .card{background:linear-gradient(180deg,#fffdf6,#ffefd6) !important;border:3px solid #453244 !important;
+    border-radius:22px !important;
+    box-shadow:5px 6px 0 rgba(30,20,30,.32), inset 0 0 0 2px #fff6e0 !important;}
+  .card::before{content:'🐾';position:absolute;top:7px;left:9px;font-size:13px;opacity:.4;
+    transform:rotate(-18deg);pointer-events:none;}
+  .card:hover{transform:translateY(-10px) rotate(-1deg) scale(1.03) !important;}
+  .card .tag{background:linear-gradient(180deg,#ffe9a8,#ffd76e) !important;color:#453244 !important;
+    border:2px solid #453244 !important;border-radius:999px !important;box-shadow:2px 3px 0 rgba(69,50,68,.3) !important;}
+  .card .tag.new{background:linear-gradient(180deg,#a5f5bc,#7de89a) !important;color:#453244 !important;}
+  .card .tag.evo{background:linear-gradient(180deg,#ff7d8e,#e05656) !important;color:#fff6e0 !important;}
+  .card .tag.stamp{background:linear-gradient(180deg,#ffe9a8,#ffd76e) !important;color:#453244 !important;}
+  .card .hotkey{background:#2e2a3c !important;color:#fff6e0 !important;border:2px solid #453244 !important;
+    border-radius:999px !important;}
+  .pip{border-radius:50% !important;border:2px solid rgba(69,50,68,.45) !important;background:#e8dcc8 !important;}
+  .pip.on{background:#ffab5e !important;border-color:#453244 !important;}
+  /* ---- 宝箱奖励 / 结算数据格 ---- */
+  .reward{background:linear-gradient(180deg,#fffdf6,#fff6e0) !important;border:2px solid #453244 !important;
+    border-radius:16px !important;}
+  #chest-title{color:#453244 !important;}
+  .stat-box{background:linear-gradient(180deg,#fffdf6,#ffefd6) !important;border:2px solid #453244 !important;
+    border-radius:12px !important;box-shadow:3px 3px 0 rgba(69,50,68,.22) !important;}
+  .stat-box .num{color:#e05656 !important;}
+  .stat-box .sico{display:block;height:20px;width:auto;margin:0 auto 2px;image-rendering:auto;}
+  #over-mother{color:#e05656 !important;}
+  /* 结算面板顶部「大橘」横幅（js/result.js 绘制：成功=站姿 / 失败=躺平，轻微上下浮动） */
+  #over-cat{display:block;width:96px;height:96px;margin:0 auto 2px;image-rendering:pixelated;
+    animation:catbob 2.6s ease-in-out infinite;filter:drop-shadow(0 5px 0 rgba(30,20,30,.15));}
+  @keyframes catbob{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+  #build-sec{background:linear-gradient(180deg,#fffdf6,#fff6e0) !important;border:2px solid #453244 !important;
+    border-radius:16px !important;}
+  #build-title{color:#453244 !important;}
+  .chip{background:linear-gradient(180deg,#fffdf6,#ffefd6) !important;border:2px solid #453244 !important;
+    border-radius:12px !important;box-shadow:2px 3px 0 rgba(69,50,68,.25) !important;}
+  .chip .lv{background:#e05656 !important;border:2px solid #453244 !important;border-radius:999px !important;}
+  .chip.evo{border-color:#e05656 !important;box-shadow:0 0 8px rgba(224,86,86,.55),2px 3px 0 rgba(69,50,68,.25) !important;}
+  .chip.evo .lv{background:linear-gradient(180deg,#ff7d8e,#e05656) !important;color:#fff6e0 !important;}
+  .chip.stamp{border-color:#ffd76e !important;background:linear-gradient(180deg,#fff6df,#ffe9bd) !important;}
+  .chip.stamp .lv{background:linear-gradient(180deg,#ffe9a8,#ffd76e) !important;color:#453244 !important;}
+  /* ---- 暂停 ---- */
+  #pause-title{color:#453244 !important;}
+  /* ---- ⚙ 平衡设置抽屉 ---- */
+  #cfg-drawer{border-left:3px solid #453244 !important;border-radius:22px 0 0 22px !important;}
+  #cfg-head{color:#453244 !important;}
+  #cfg-desc{background:linear-gradient(180deg,#fffdf6,#fff6e0) !important;border:2px solid #453244 !important;
+    border-radius:12px !important;}
+  #cfg-desc b{color:#e05656 !important;}
+  #cfg-presets button{background:#f2e8d8 !important;color:#453244 !important;
+    border:2px solid #453244 !important;border-radius:999px !important;box-shadow:0 3px 0 rgba(69,50,68,.4) !important;}
+  #cfg-presets button.on{background:linear-gradient(180deg,#ff7d8e,#e05656) !important;color:#fff6e0 !important;
+    box-shadow:0 3px 0 #453244 !important;}
+  #cfg-text{border:2px solid #453244 !important;border-radius:12px !important;}
+  /* ⚙ 入口 = 42px 圆形像素齿轮（pixel-assets/ui/gear.png，由 tools/gen/pixel_ui.py 生成），
+     与游戏内右上角 Lv 圆徽章（直径 42、圆心约 vw-34,30）同列成组：右缘对齐 vw-13、居徽章正下方；
+     意见5：对局相关状态（play/升级三选一/开宝箱/暂停/倒地）由 main.js 挂 hidden 隐藏本钮、
+     让位给游戏 HUD（改走暂停面板的「⚙ 平衡设置」），仅主菜单/结算/玩法说明/更新日志等非对局界面显示；
+     hover 轻转 20deg，active 压下，drop-shadow 保留硬阴影下压感 */
+  #btn-cfg{top:58px !important;right:13px !important;width:42px !important;height:42px !important;
+    border:none !important;border-radius:50% !important;
+    background:url('pixel-assets/ui/gear.png') center/42px 42px no-repeat !important;
+    color:transparent !important;font-size:0 !important;line-height:0 !important;image-rendering:pixelated;
+    box-shadow:none !important;filter:drop-shadow(0 3px 0 rgba(20,14,26,.55));transition:transform .12s, filter .12s !important;}
+  #btn-cfg:hover{transform:translateY(-1px) rotate(20deg) !important;filter:drop-shadow(0 4px 0 rgba(20,14,26,.55));}
+  #btn-cfg:active{transform:translateY(3px) !important;filter:drop-shadow(0 0 0 rgba(20,14,26,.55));}
+  /* 像素覆盖 v2.2 结束 */
   @media (prefers-reduced-motion: reduce){
     *{animation-duration:.01s !important;animation-delay:0s !important}
   }
@@ -237,12 +379,9 @@
 <body>
 <canvas id="game"></canvas>
 
-<!-- ⚙ 平衡设置入口（任何时候可见） -->
+<!-- ⚙ 平衡设置入口：对局进行中由 main.js 挂 hidden 隐藏（意见5），仅主菜单/结算等非对局界面可见；
+     🔊 音效 / 🔍 缩放 / ⏩ 加速在暂停面板（与「继续夜巡」同级的两行三钮）切换 -->
 <button id="btn-cfg" title="平衡设置（game_config.js）">⚙</button>
-
-<!-- 🔍 缩放 / ⏩ 加速（进局显示，回主菜单隐藏；快捷键 -/= 缩放、1/2/3 加速） -->
-<button id="btn-zoom" class="hidden" title="画面缩放（- / = 调节）">🔍 1X</button>
-<button id="btn-speed" class="hidden" title="游戏加速（1 / 2 / 3）">⏩ 1X</button>
 
 <!-- 主菜单 -->
 <div id="screen-menu" class="overlay">
@@ -260,25 +399,18 @@
       <button class="btn secondary" id="btn-help">玩法说明</button>
       <button class="btn secondary" id="btn-log">📜 更新日志</button>
     </div>
-    <div id="menu-hint">WASD / 方向键 移动 · 武器全自动 · P 暂停 · M 静音 · 1/2/3 加速 · -/= 缩放</div>
+    <div id="menu-hint">WASD / 方向键 移动 · 武器全自动 · P 暂停 · M 静音 · 暂停面板可切 音效/缩放/加速（-/= · 1/2/3）</div>
   </div>
 </div>
 <div id="help-panel" class="panel ears hidden">
   <div style="font-size:26px;letter-spacing:3px">🐱 玩法说明</div>
   <div class="help-list">
-    · 大橘要迎接<b>无尽鼠潮</b>：每轮 15 分钟、<b>4 个批次</b>，每批有<b>头目</b>压阵！<br>
-    · 打倒批次头目，下一批<b>立刻来袭</b>；讨伐<b>鼠王·铁须</b>就进入<b>下一轮</b>——难度节节攀升，看你能守到第几轮！<br>
-    · <b>第 3 轮</b>讨伐鼠王后，压轴 Boss<b>「老鼠妈妈」</b>降临！打倒她即达成夜巡目标（结算看<b>讨伐用时</b>），之后可选「继续夜巡」进入无尽模式！<br>
-    · <span class="key">W A S D</span><span class="key">↑↓←→</span>移动（手机摇杆），武器<b>自动攻击</b>，专心走位！<br>
-    · <b>六张夜巡地图</b>任选：老城夜市 / 樱花公园 / 港湾码头 / 雪山温泉 / 幽灵游乐园 / 无尽街区！<br>
-    · 手工地图上：<b>楼房与水面走不了</b>；<b>草地、沙滩、深雪、落叶</b>会拖慢脚步；<b>🐾 猫道</b>只有你能钻过去，鼠群进不来——善用地形遛鼠群！<br>
-    · 怪物各有脾性：<b>三花姐</b>会蓄力突进、<b>鸽子</b>隔空吐羽毛、<b>浣熊</b>爱扑抢地上的鱼干、<b>蜗牛</b>身后留黏液拖慢你——见招拆招！<br>
-    · 打倒敌人捡<b>小鱼干</b>升级，每次 <b>3 选 1</b> 强化武器或被动；除猫爪外最多携带 <b>4 种武器</b>，选好你的构筑！<br>
-    · <b>70 级</b>后进入尾声：不再出现可选的武器/技能/进化，每升 1 级自动 <b>生命 +2%、移速 +1%</b> 并回满血；<b>80 级</b>后经验不再直接升级——只有开<b>宝箱</b>才能结算升级！<br>
-    · <b>70 级</b>后猫爪印<b>只在宝箱中出现</b>：全武器生效的印章，效果乘法、<b>可无限叠加</b>，无尽轮次的核心成长！<br>
-    · 每 2 分钟有<b>精英</b>出没：半数掉<b>宝箱</b>（<b>幸运锦鲤</b>提高概率，没掉宝箱改掉金币），<b>批次头目</b>必掉宝箱，普通老鼠还有极小概率掉宝箱！武器满级 + 对应被动，宝箱会触发<b>进化</b>！<br>
-    · 小心被围住：牛奶回血、烟花清屏、猫薄荷吸鱼干，见好就收～<br>
-    · 想改数值？右上角 <b>⚙ 平衡设置</b>，改 game_config.js 刷新即生效！
+    · <b>目标</b>：每轮 15 分钟、<b>4 个批次</b>，打倒每批<b>头目</b>推进；每轮末尾讨伐<b>鼠王·铁须</b>进入下一轮；<b>第 3 轮</b>压轴 Boss<b>「老鼠妈妈」</b>被讨伐就通关～之后还能继续<b>无尽夜巡</b>！<br>
+    · <b>操作</b>：<span class="key">W A S D</span><span class="key">↑↓←→</span>或手机摇杆移动，武器<b>全自动</b>，专心走位就好！<br>
+    · <b>成长</b>：捡<b>小鱼干</b>升级，每次 <b>3 选 1</b> 强化；除猫爪外最多再带 <b>4 种武器</b>。<br>
+    · <b>地形</b>：楼房水面走不了，🐾<b>猫道</b>只有你能钻——善用地形遛鼠群！<br>
+    · <b>掉落</b>：牛奶回血、烟花清屏、猫薄荷吸鱼干。<br>
+    · 更多玩法，自己探索～喵！
   </div>
   <button class="btn small" id="btn-help-close">知道啦！</button>
 </div>
@@ -301,6 +433,8 @@
     <div id="chest-rewards"></div>
     <button class="btn" id="btn-chest-ok">开心收下！</button>
   </div>
+  <!-- 庆祝演出层：彩纸/烟花/金光/群猫欢呼全画在这层（指针穿透不挡点击；金币头奖时也会临时挂到 body 播迷你版） -->
+  <canvas id="chest-fx"></canvas>
 </div>
 
 <!-- 暂停 -->
@@ -310,16 +444,23 @@
     <div class="btnrow" style="flex-direction:column;margin-top:18px">
       <button class="btn" id="btn-resume">继续夜巡</button>
       <button class="btn secondary" id="btn-restart">重新开始</button>
+      <!-- 🔊 音效 / 🔍 缩放 / ⏩ 加速：与「继续夜巡」同级的三钮一行（从平衡设置抽屉移出）；
+           接线在 main.js / config_panel.js，按钮 id 不变（#cfg-*-btn） -->
+      <div class="btnrow">
+        <button class="btn small secondary" id="cfg-mute-btn" title="音效开关：单击切换（快捷键 M）">🔊 音效:开</button>
+        <button class="btn small secondary" id="cfg-zoom-btn" title="画面缩放：单击循环 1X → 2X → 4X（快捷键 - / =）">🔍 1X</button>
+        <button class="btn small secondary" id="cfg-speed-btn" title="游戏加速：单击循环 1X → 2X → 3X（快捷键 1 / 2 / 3）">⏩ 1X</button>
+      </div>
       <button class="btn secondary" id="btn-cfg-pause">⚙ 平衡设置</button>
       <button class="btn secondary" id="btn-quit">回主菜单</button>
     </div>
-    <div class="mute-row"><button class="btn small secondary" id="btn-mute">音效：开</button></div>
   </div>
 </div>
 
 <!-- 结算（成功收工 / 失败倒下，共用同一张面板） -->
 <div id="screen-over" class="overlay dim hidden">
   <div class="panel ears" style="min-width:min(92vw,520px);max-height:94vh;overflow-y:auto">
+    <canvas id="over-cat" width="96" height="96"></canvas>
     <div id="over-title">😿 大橘累倒了…</div>
     <div id="over-sub"></div>
     <div id="over-mother" hidden></div>
@@ -385,16 +526,65 @@
 
 <div class="credit">原创程序美术 &amp; 合成音乐 · 猫叫采样授权见 assets/meow/CREDITS.md · 灵感致敬 Vampire Survivors</div>
 
-<script src="js/util.js?v=20260908e"></script>
-<script src="js/audio.js?v=20260908e"></script>
-<script src="js/art.js?v=20260908e"></script>
-<script src="js/maps.js?v=20260908e"></script>
-<script src="js/game_config.js?v=20260908e"></script>
-<script src="js/data.js?v=20260908e"></script>
-<script src="js/config_panel.js?v=20260908e"></script>
-<script src="js/result.js?v=20260908e"></script>
-<script src="js/changelog.js?v=20260908e"></script>
-<script src="js/changelog_ui.js?v=20260908e"></script>
-<script src="js/main.js?v=20260908e"></script>
+<script src="js/util.js?v=20260909d"></script>
+<script src="js/audio.js?v=20260909d"></script>
+<script src="js/art.js?v=20260909d"></script>
+<script src="pixel-assets/manifest.js?v=20260909d"></script>
+<script src="js/art_pixel.js?v=20260909d"></script>
+<script src="js/maps.js?v=20260909d"></script>
+<script src="js/game_config.js?v=20260909d"></script>
+<script src="js/data.js?v=20260909d"></script>
+<script src="js/config_panel.js?v=20260909d"></script>
+<script src="js/result.js?v=20260909d"></script>
+<script src="js/changelog.js?v=20260909d"></script>
+<!-- 截图/自动化辅助（仅带 ?shot= 参数时生效）：help=玩法说明 log=更新日志 menu=干净主菜单。
+     先把 ?shot= 归一成 ?auto=shot（复用 changelog_ui「自动化不打扰」抑制，防止新版本日志自动弹出干扰），
+     再等 main.js 就位后复用既有按钮 click 打开面板；不改任何游戏逻辑，与 ?dev=1&auto=... 钩子同族 -->
+<script>
+(function () {
+  var s = new URLSearchParams(location.search).get('shot');
+  /* 自动化/调试(?dev=1|?auto=|?shot=)时把未捕获异常写进标题，供 --dump-dom 抓取排障 */
+  if (/[?&](dev=1|auto=|shot=)/.test(location.search)) {
+    var et = function (m) { document.title = 'ERR:' + m; };
+    window.addEventListener('error', function (e) { et((e.message || 'error') + ' @ ' + (e.filename || '').split('/').pop() + ':' + e.lineno); });
+    window.addEventListener('unhandledrejection', function (e) { et('rej:' + (e.reason && e.reason.message || e.reason)); });
+  }
+  if (!s) return;
+  try {
+    var u = new URL(location.href);
+    u.searchParams.set('auto', 'shot');
+    history.replaceState(null, '', u);
+  } catch (e) {}
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      if (s === 'share') { // 战报分享图预览：等像素素材就绪后把 renderCard 画布全屏铺开供截图
+        var draw = function () {
+          try {
+            var cv = Result.renderCard({
+            win: true, round: 3, time: 732, lv: 24, kills: 900, gold: 1200,
+            dmgTotal: 1234567, dps: 1685, peakSec: 9876,
+            weapons: [{ id: 'claw', lv: 8, evolved: true }, { id: 'note', lv: 5 }],
+            passives: [{ id: 'catnip', lv: 3 }, { id: 'koi', lv: 2 }],
+            affixes: [{ id: 'dmg', stacks: 4 }, { id: 'pierce', stacks: 2 }],
+            best: { time: 900, rounds: 5 }, date: new Date()
+          });
+          cv.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;object-fit:contain;background:#141430;z-index:999';
+          document.body.appendChild(cv);
+          } catch (e) { console.error('shot share failed', e); }
+        };
+        if (window.__PIXEL_GATE && window.__PIXEL_GATE.then) window.__PIXEL_GATE.then(draw);
+        else draw();
+        return;
+      }
+      var b = { help: 'btn-help', log: 'btn-log', cfg: 'btn-cfg' }[s];
+      var el = b && document.getElementById(b);
+      if (el) el.click();
+    }, 500);
+  });
+})();
+</script>
+<script src="js/changelog_ui.js?v=20260909d"></script>
+<script>window.__PIXEL_GATE = new Promise(function(r){ window.addEventListener('pixel-assets-ready', r, { once: true }); });</script>
+<script src="js/main.js?v=20260909d"></script>
 </body>
 </html>

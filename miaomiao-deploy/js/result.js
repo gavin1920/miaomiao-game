@@ -24,8 +24,52 @@ const Result = (() => {
     return d;
   }
 
+  /* 大橘横幅：结算面板顶部的 #over-cat（index.html 新增画布）。
+     成功（含讨伐老鼠妈妈）= 站姿 idle[0]，失败 = 躺平 dead；上下浮动交给 CSS catbob 动画 */
+  function drawOverCat(d) {
+    const cv = $('over-cat');
+    if (!cv || !Art.playerFrames) return;
+    const cat = d.win ? Art.playerFrames.idle[0] : Art.playerFrames.dead;
+    if (!cat) return;
+    cv.width = cat.width; cv.height = cat.height; // 画布贴帧原生尺寸，CSS 显示 96px，像素不糊
+    const x = cv.getContext('2d');
+    x.imageSmoothingEnabled = false;
+    x.clearRect(0, 0, cv.width, cv.height);
+    x.drawImage(cat, 0, 0);
+  }
+
+  /* 数据格小图标：每格配一枚已有像素图标（像素模式读 manifest 键 / 原版矢量回退读 art.js 键） */
+  const STAT_ICONS = {
+    'st-round': ['paw', 'paw'],         // 到达轮次 · 爪印足迹
+    'st-time': ['alarm', 'clock'],      // 本局时长 · 小闹钟
+    'st-lv': ['bell', 'bell'],          // 等级 · 铃铛
+    'st-kill': ['claw', 'claw'],        // 打跑敌人 · 猫爪
+    'st-gold': ['coin', 'coin'],        // 金币
+    'st-dmg': ['dmg', 'stampDmg'],      // 总伤害 · 锐爪印
+    'st-dps': ['zap', 'zap'],           // 平均 DPS · 静电
+    'st-peak': ['crit', 'stampCrit']    // 最高秒伤 · 会心印
+  };
+  function statIcon(id, keys) {
+    const box = $(id);
+    if (!box) return;
+    let c = box.querySelector('canvas.sico');
+    if (!c) {
+      c = document.createElement('canvas');
+      c.className = 'sico';
+      box.insertBefore(c, box.firstChild);
+    }
+    const icon = Art.icons && (Art.icons[keys[0]] || Art.icons[keys[1]]);
+    if (!icon) return;
+    c.width = 44; c.height = 44;
+    const x = c.getContext('2d');
+    x.imageSmoothingEnabled = true;
+    x.clearRect(0, 0, 44, 44);
+    x.drawImage(icon, 0, 0, 44, 44);
+  }
+
   function open(d) {
     last = d;
+    drawOverCat(d);
     // 标题与文案：收工 / 失败倒下 / 讨伐老鼠妈妈，共用同一布局
     if (d.mother) {
       $('over-title').textContent = '🐭 老鼠妈妈已讨伐！';
@@ -54,6 +98,7 @@ const Result = (() => {
     $('st-dmg').textContent = U.fmtNum(d.dmgTotal);
     $('st-dps').textContent = U.fmtNum(d.dps);
     $('st-peak').textContent = U.fmtNum(d.peakSec);
+    for (const [id, keys] of Object.entries(STAT_ICONS)) statIcon(id, keys);
     // 构筑清单：武器（进化显示进化图标）/ 被动 / 猫爪印
     const W = DATA.WEAPONS, P = DATA.PASSIVES, S = DATA.STAMP_META;
     const bw = $('bchips-w'); bw.innerHTML = '';
@@ -91,7 +136,7 @@ const Result = (() => {
   function drawBadge(x, bx, by, txt, bg, fg) {
     x.font = '900 22px ' + FONT;
     const w = Math.max(42, x.measureText(txt).width + 20);
-    fillRR(x, bx - w, by, w, 34, 17, bg, '#fff', 3);
+    fillRR(x, bx - w, by, w, 34, 17, bg, '#453244', 3);
     x.fillStyle = fg || '#fff';
     x.textAlign = 'center'; x.textBaseline = 'middle';
     x.fillText(txt, bx - w / 2, by + 18);
@@ -100,16 +145,16 @@ const Result = (() => {
     const S = 78;
     const stamp = kind === 'stamp', evo = kind === 'evo';
     x.save();
-    if (evo) { x.shadowColor = 'rgba(255,125,170,.85)'; x.shadowBlur = 18; }
+    if (evo) { x.shadowColor = 'rgba(224,86,86,.85)'; x.shadowBlur = 18; }
     const g = x.createLinearGradient(0, cy, 0, cy + S);
     g.addColorStop(0, stamp ? '#fff6df' : '#fffdf6');
     g.addColorStop(1, stamp ? '#ffe9bd' : '#ffefd6');
-    fillRR(x, cx, cy, S, S, 18, g, evo ? '#ff7daa' : stamp ? '#e8b96a' : '#ffd9a0', 5);
+    fillRR(x, cx, cy, S, S, 20, g, '#453244', 4); // VI v2.2：chip 描边统一墨线
     x.restore();
     x.drawImage(icon, cx + 10, cy + 9, 60, 60);
     if (badgeTxt != null) {
-      const bg = stamp ? '#f0b13c' : evo ? '#ff7daa' : '#ff8fb5';
-      const fg = stamp ? '#5c3a08' : '#fff';
+      const bg = stamp ? '#f0b13c' : evo ? '#e05656' : '#ff8fb5';
+      const fg = stamp ? '#453244' : '#fff6e0';
       drawBadge(x, cx + S + 12, cy + S - 20, badgeTxt, bg, fg);
     }
   }
@@ -161,21 +206,21 @@ const Result = (() => {
     x.drawImage(Art.glows.lamp, W - 300, groundY - 150, 250, 250);
     x.restore();
 
-    /* ---- 面板底 + 猫耳 + 大橘 ---- */
-    fillRR(x, panelX + 4, panelTop + 16, panelW, panelH, 34, 'rgba(40,24,60,.30)');
+    /* ---- 面板底 + 猫耳 + 大橘（VI v2.2：蛋壳渐变 + 墨线 + 内奶白描边） ---- */
+    fillRR(x, panelX + 6, panelTop + 18, panelW, panelH, 36, 'rgba(30,20,30,.32)');
     const pg = x.createLinearGradient(0, panelTop, 0, panelBot);
-    pg.addColorStop(0, '#fffdf6'); pg.addColorStop(1, '#ffefd6');
-    fillRR(x, panelX, panelTop, panelW, panelH, 30, pg, '#ffd9a0', 6);
+    pg.addColorStop(0, '#fffdf6'); pg.addColorStop(1, '#f2e8d8');
+    fillRR(x, panelX, panelTop, panelW, panelH, 34, pg, '#453244', 6);
     x.save();
-    x.strokeStyle = '#fff'; x.lineWidth = 4;
-    Art.rr(x, panelX + 8, panelTop + 8, panelW - 16, panelH - 16, 24); x.stroke();
+    x.strokeStyle = '#fff6e0'; x.lineWidth = 4;
+    Art.rr(x, panelX + 8, panelTop + 8, panelW - 16, panelH - 16, 27); x.stroke();
     x.restore();
     // 猫耳
     for (const side of [-1, 1]) {
       x.save();
       x.translate(side < 0 ? panelX + 148 : panelX + panelW - 148, panelTop - 4);
       x.rotate(side < 0 ? -0.42 : Math.PI * 0.63);
-      fillRR(x, -22, -22, 44, 44, 14, '#ffefd6', '#ffd9a0', 5);
+      fillRR(x, -22, -22, 44, 44, 14, '#f2e8d8', '#453244', 5);
       x.restore();
     }
     // 大橘（成功站姿 / 失败躺平），趴在面板右上角
@@ -196,7 +241,7 @@ const Result = (() => {
     x.fillText('🌙 喵都幸存者 · 夜巡战报', W / 2, y + 17);
     y += 34;
     x.font = '900 58px ' + FONT;
-    x.fillStyle = d.mother ? '#a44fc9' : d.win ? '#e2637f' : '#5b4a44';
+    x.fillStyle = d.mother ? '#a44fc9' : d.win ? '#e05656' : '#453244';
     x.fillText(d.mother ? '🐭 老鼠妈妈已讨伐！' : d.win ? '🎉 收工大吉！' : '😿 大橘累倒了…', W / 2, y + 37);
     y += 74;
     x.font = '400 27px ' + FONT;
@@ -215,10 +260,12 @@ const Result = (() => {
     const gap = 18, cellW = (innerW - gap * 3) / 4, cellH = 112;
     stats.forEach((st, i) => {
       const cx = innerX + (i % 4) * (cellW + gap), cy = y + Math.floor(i / 4) * (cellH + 16);
-      fillRR(x, cx, cy, cellW, cellH, 20, '#fff', '#ffe1b0', 4);
+      const cg = x.createLinearGradient(0, cy, 0, cy + cellH);
+      cg.addColorStop(0, '#fffdf6'); cg.addColorStop(1, '#ffefd6');
+      fillRR(x, cx, cy, cellW, cellH, 22, cg, '#453244', 3);
       x.textAlign = 'center';
       x.font = '900 40px ' + FONT;
-      x.fillStyle = '#e2637f';
+      x.fillStyle = '#e05656';
       x.fillText(st[0], cx + cellW / 2, cy + 42);
       x.font = '400 22px ' + FONT;
       x.fillStyle = '#96806f';
@@ -226,7 +273,9 @@ const Result = (() => {
     });
     y += 242 + 26;
     // 构筑清单
-    fillRR(x, innerX, y, innerW, buildH, 20, '#fff', '#ffe1b0', 4);
+    const bg2 = x.createLinearGradient(0, y, 0, y + buildH);
+    bg2.addColorStop(0, '#fffdf6'); bg2.addColorStop(1, '#fff6e0');
+    fillRR(x, innerX, y, innerW, buildH, 22, bg2, '#453244', 3);
     x.font = '700 30px ' + FONT;
     x.fillStyle = '#c47b1e'; x.textAlign = 'left';
     x.fillText('🐾 本局构筑', innerX + 30, y + 32);

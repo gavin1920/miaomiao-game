@@ -1,5 +1,7 @@
 /* 喵都幸存者 - 📜更新日志面板：渲染 js/changelog.js 的数据。
-   有没看过的新版本时，回到主菜单会自动弹出最新一期（localStorage 记忆已看版本） */
+   意见2（第六版）：整列上下滚动观看——面板固定 70% 屏高且垂直居中、不显示滚动条，
+   滚轮 / 触屏拖动（原生 pan-y）/ 鼠标按住拖拽三种方式上下翻看，不再一页一期；
+   有没看过的新版本时，回到主菜单会自动弹出面板（localStorage 记忆已看版本） */
 'use strict';
 const ChangelogUI = (() => {
   const $ = id => document.getElementById(id);
@@ -13,7 +15,8 @@ const ChangelogUI = (() => {
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   // 顶层 const 不挂 window，直接引用 CHANGELOG；changelog.js 万一没加载也不报错
   const dataOf = () => { try { return CHANGELOG; } catch (e) { return null; } };
-  const latest = () => { const c = dataOf(); return (c && c.entries && c.entries[0]) || null; };
+  const entries = () => { const c = dataOf(); return (c && c.entries) || []; };
+  const latest = () => entries()[0] || null;
   const hasNew = () => { const l = latest(); return !!(l && l.version && U.storage.get(SEEN_KEY, '') !== l.version); };
 
   function entryHtml(e, newest) {
@@ -28,12 +31,41 @@ const ChangelogUI = (() => {
       ${e.title ? `<div class="log-title">${esc(e.title)}</div>` : ''}${items}</div>`;
   }
 
-  function open(onlyLatest, silent) {
-    const c = dataOf();
-    const es = (c && c.entries) || [];
-    $('log-list').innerHTML = es.length
-      ? es.slice(0, onlyLatest ? 1 : es.length).map((e, i) => entryHtml(e, i === 0)).join('')
+  function render() {
+    const es = entries();
+    const list = $('log-list');
+    if (!list) return;
+    list.innerHTML = es.length
+      ? es.map((e, i) => entryHtml(e, i === 0)).join('')
       : '<div class="log-item"><span>暂无更新记录～</span></div>';
+    list.scrollTop = 0; // 每次打开回到最上面（最新一期）
+  }
+
+  /* 鼠标按住拖拽滚动；触屏用原生 pan-y 滚动、滚轮原生，都无需接管 */
+  function bindDragScroll(list) {
+    if (!list || !list.setPointerCapture) return; // 无头测试桩没有 Pointer 事件，直接跳过
+    let drag = null;
+    list.addEventListener('pointerdown', e => {
+      if (e.pointerType !== 'mouse' || e.button !== 0) return;
+      drag = { id: e.pointerId, y: e.clientY, top: list.scrollTop };
+      list.classList.add('dragging');
+      try { list.setPointerCapture(e.pointerId); } catch (err) { /* 老浏览器忽略 */ }
+    });
+    list.addEventListener('pointermove', e => {
+      if (!drag || e.pointerId !== drag.id) return;
+      list.scrollTop = drag.top - (e.clientY - drag.y);
+    });
+    const stop = e => {
+      if (!drag || e.pointerId !== drag.id) return;
+      drag = null;
+      list.classList.remove('dragging');
+    };
+    list.addEventListener('pointerup', stop);
+    list.addEventListener('pointercancel', stop);
+  }
+
+  function open(onlyLatest, silent) {
+    render();
     $('screen-log').classList.remove('hidden');
     // 游戏画布全局禁用了触摸手势，看日志时放开纵向滚动，手机才能划动列表
     document.body.classList.add('log-open');
@@ -51,8 +83,9 @@ const ChangelogUI = (() => {
     if (!$('btn-log') || !$('btn-log-close')) return;
     $('btn-log').addEventListener('click', () => open(false, false));
     $('btn-log-close').addEventListener('click', () => close());
+    bindDragScroll($('log-list'));
     updateBadge();
-    // 有新版本：进主菜单后自动弹出最新一期；自动化测试（?auto=）不打扰
+    // 有新版本：进主菜单后自动弹出；自动化测试（?auto=）不打扰
     if (hasNew() && !/[?&]auto=/.test(location.search)) setTimeout(() => open(true, true), 800);
   }
   return { init, open, close, hasNew };

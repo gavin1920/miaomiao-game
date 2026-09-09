@@ -262,6 +262,35 @@ const CfgPanel = (() => {
   /* ---------- 面板 UI ---------- */
   let ta = null, srcNote = null, panel = null, onClose = null;
 
+  /* ---------- 🔊 音效 / 🔍 画面缩放 / ⏩ 游戏加速（暂停面板三钮一行，与「继续夜巡」同级） ----------
+     单一真源在 main.js 的 setZoom/setSpeed/toggleMuted：改值后广播 meow-toggles 事件；
+     这里只负责发起循环请求（window.MeowView）和显示当前状态（音效开/关 + 缩放/加速档位），
+     音效按钮的点击接线在 main.js（按钮本体在 index.html 暂停面板，id 沿用 #cfg-*-btn）。 */
+  let vsZoom = 1, vsSpeed = 1, vsMuted = false;
+  function refreshViewBtns() {
+    const mb = document.getElementById('cfg-mute-btn'), zb = document.getElementById('cfg-zoom-btn'), sb = document.getElementById('cfg-speed-btn');
+    if (mb) mb.textContent = vsMuted ? '🔇 音效:关' : '🔊 音效:开';
+    if (zb) zb.textContent = '🔍 ' + vsZoom + 'X';
+    if (sb) sb.textContent = '⏩ ' + vsSpeed + 'X';
+  }
+  function syncViewFromMain() { // 从 main.js 导出的 MeowView 拉取当前状态（面板初始化等时机调用）
+    const mv = window.MeowView;
+    if (mv && mv.get) {
+      const v = mv.get() || {};
+      if (v.zoom) vsZoom = v.zoom;
+      if (v.speed) vsSpeed = v.speed;
+      if (typeof v.muted === 'boolean') vsMuted = v.muted;
+    }
+    refreshViewBtns();
+  }
+  document.addEventListener('meow-toggles', e => { // main.js 改档/切静音广播 → 刷新暂停面板三钮文字
+    const d = (e && e.detail) || {};
+    if (d.zoom) vsZoom = d.zoom;
+    if (d.speed) vsSpeed = d.speed;
+    if (typeof d.muted === 'boolean') vsMuted = d.muted;
+    refreshViewBtns();
+  });
+
   function snapshot(cfg, presetKey) {
     const c = JSON.parse(JSON.stringify(cfg));
     if (presetKey && PRESETS[presetKey]) Object.assign(c.difficulty, PRESETS[presetKey].vals);
@@ -308,6 +337,7 @@ const CfgPanel = (() => {
   }
   function open() {
     show(panel, true);
+    syncViewFromMain(); // 每次打开按 main.js 当前档位顺带刷新（三钮本体在暂停面板，不依赖本抽屉）
     refresh(null);
   }
   function close() { show(panel, false); }
@@ -326,6 +356,11 @@ const CfgPanel = (() => {
       Sfx.sfx.click();
       refresh(b === 'current' ? null : b);
     });
+    // 🔊 音效（接线在 main.js）/ 🔍 缩放 / ⏩ 加速：单击循环下一档（按钮本体在暂停面板）
+    // （实际改档/切静音都在 main.js，改完经 meow-toggles 广播回这里刷新按钮文字）
+    const zbtn = document.getElementById('cfg-zoom-btn'), sbtn = document.getElementById('cfg-speed-btn');
+    if (zbtn) zbtn.addEventListener('click', () => { Sfx.sfx.click(); if (window.MeowView) window.MeowView.cycleZoom(); });
+    if (sbtn) sbtn.addEventListener('click', () => { Sfx.sfx.click(); if (window.MeowView) window.MeowView.cycleSpeed(); });
   }
   const show = (el, on) => el && el.classList && el.classList[on ? 'remove' : 'add']('hidden');
 

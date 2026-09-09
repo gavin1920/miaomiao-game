@@ -131,19 +131,21 @@ const Art = (() => {
     cream: '#fff3dc', stripe: '#e2853f', earIn: '#ffc9d4',
     nose: '#ff8f9f', collar: '#e05f5f'
   };
-  // 猫耳（模块级：本体/死亡立绘共用）
-  function catEar(x, bx, by, ax, flip) {
+  // 猫耳（模块级：本体/死亡立绘共用；pal = 调色板覆盖，欢呼小猫换毛色用）
+  function catEar(x, bx, by, ax, flip, pal) {
+    pal = pal || CAT;
     x.beginPath();
     x.moveTo(bx[0], bx[1]); x.lineTo(ax[0], ax[1]); x.lineTo(bx[2], bx[3]);
     x.closePath();
-    x.fillStyle = CAT.headTop; x.fill();
+    x.fillStyle = pal.headTop; x.fill();
     x.lineWidth = 4; x.strokeStyle = '#6b4436'; x.stroke();
     x.beginPath();
     x.moveTo(bx[0] + (flip ? 1 : 3), by[0] + 2); x.lineTo(ax[0] + (flip ? 1.5 : 1), ax[1] + 7); x.lineTo(bx[2] - 3, by[0] + 3);
-    x.closePath(); x.fillStyle = CAT.earIn; x.fill();
+    x.closePath(); x.fillStyle = pal.earIn; x.fill();
   }
-  // o: {legF, legB, bob, br(呼吸0/1), tail(0/1), face:'normal'|'blink'|'hurt', dead}
+  // o: {legF, legB, bob, br(呼吸0/1), tail(0/1), face:'normal'|'blink'|'hurt', dead, cat(调色板覆盖：换毛色画欢呼小猫)}
   function drawCat(x, o) {
+    const C = o.cat || CAT; // 毛色调色板：不传用大橘本尊配色
     const tail = o.tail || 0;
     const bob = o.bob || 0;
     const br = o.br || 0;
@@ -152,39 +154,39 @@ const Art = (() => {
     if (o.dead) { drawCatDead(x); x.restore(); return; }
     /* 尾巴（最底层）：双层描边 + 环纹 + 深色尾尖 */
     const tailDraw = (cp, end, tip) => {
-      strokePath(x, c => { c.moveTo(26, 64); c.quadraticCurveTo(cp[0], cp[1], end[0], end[1]); }, CAT.out, 13);
-      strokePath(x, c => { c.moveTo(26, 64); c.quadraticCurveTo(cp[0], cp[1], end[0], end[1]); }, CAT.furBot, 9);
+      strokePath(x, c => { c.moveTo(26, 64); c.quadraticCurveTo(cp[0], cp[1], end[0], end[1]); }, C.out, 13);
+      strokePath(x, c => { c.moveTo(26, 64); c.quadraticCurveTo(cp[0], cp[1], end[0], end[1]); }, C.furBot, 9);
       // 环纹
-      strokePath(x, c => { c.moveTo(cp[0] * 0.55 + 13, cp[1] * 0.55 + 32); c.lineTo(cp[0] * 0.5 + 11, cp[1] * 0.5 + 40); }, CAT.stripe, 8);
-      circ(x, tip[0], tip[1], 5.6, CAT.stripe, CAT.out, 2.4);
+      strokePath(x, c => { c.moveTo(cp[0] * 0.55 + 13, cp[1] * 0.55 + 32); c.lineTo(cp[0] * 0.5 + 11, cp[1] * 0.5 + 40); }, C.stripe, 8);
+      circ(x, tip[0], tip[1], 5.6, C.stripe, C.out, 2.4);
       shine(x, tip[0] - 1.6, tip[1] - 1.8, 2, 1.3, -0.5);
     };
     if (tail === 0) tailDraw([4, 52], [6, 30], [7, 27]);
     else tailDraw([-2, 62], [-4, 44], [-5, 41]);
     /* 后腿 */
-    blob(x, ellPath(34 + (o.legB || 0), 80, 8.5, 7.5), lg(x, 0, 72, 0, 88, [[0, CAT.headBot], [1, CAT.furBot]]), { ow: 3.5 });
+    blob(x, ellPath(34 + (o.legB || 0), 80, 8.5, 7.5), lg(x, 0, 72, 0, 88, [[0, C.headBot], [1, C.furBot]]), { ow: 3.5 });
     /* 身体：渐变 + 双描边 */
     blob(x, ellPath(47, 62, 26, 21 + br * 0.8),
-      lg(x, 0, 40, 0, 84, [[0, CAT.furTop], [0.55, '#ffb970'], [1, CAT.furBot]]), { ow: 4 });
+      lg(x, 0, 40, 0, 84, [[0, C.furTop], [0.55, C.furMid || '#ffb970'], [1, C.furBot]]), { ow: 4 });
     /* 肚皮（柔边） */
     x.save();
-    ell(x, 50, 69, 15, 12.5, rg(x, 50, 66, 3, 17, [[0, CAT.cream], [0.75, '#fff0d6'], [1, 'rgba(255,240,214,0)']]));
+    ell(x, 50, 69, 15, 12.5, rg(x, 50, 66, 3, 17, [[0, C.cream], [0.75, '#fff0d6'], [1, 'rgba(255,240,214,0)']]));
     x.restore();
     /* 背部条纹 */
     x.save(); x.globalAlpha = 0.9;
-    strokePath(x, c => { c.moveTo(32, 46); c.quadraticCurveTo(36, 52, 32, 58); }, CAT.stripe, 5);
-    strokePath(x, c => { c.moveTo(44, 42); c.quadraticCurveTo(48, 49, 44, 56); }, CAT.stripe, 5);
+    strokePath(x, c => { c.moveTo(32, 46); c.quadraticCurveTo(36, 52, 32, 58); }, C.stripe, 5);
+    strokePath(x, c => { c.moveTo(44, 42); c.quadraticCurveTo(48, 49, 44, 56); }, C.stripe, 5);
     x.restore();
     /* 前腿（走路抬起时露爪垫） */
     const fLeg = 62 + (o.legF || 0);
-    blob(x, ellPath(fLeg, 81, 8, 7.5), lg(x, 0, 73, 0, 89, [[0, CAT.headBot], [1, CAT.furBot]]), { ow: 3.5 });
+    blob(x, ellPath(fLeg, 81, 8, 7.5), lg(x, 0, 73, 0, 89, [[0, C.headBot], [1, C.furBot]]), { ow: 3.5 });
     if (o.legF < -2) { // 抬起的爪爪
-      circ(x, fLeg - 2.4, 84.5, 1.5, CAT.earIn); circ(x, fLeg + 1.6, 85, 1.5, CAT.earIn); circ(x, fLeg, 82.6, 1.8, CAT.earIn);
+      circ(x, fLeg - 2.4, 84.5, 1.5, C.earIn); circ(x, fLeg + 1.6, 85, 1.5, C.earIn); circ(x, fLeg, 82.6, 1.8, C.earIn);
     }
     /* 项圈 + 铃铛（脖子处） */
     x.save();
     x.beginPath(); x.ellipse(60, 56, 21, 15, 0, Math.PI * 0.18, Math.PI * 0.86);
-    x.lineWidth = 7.5; x.strokeStyle = CAT.collar; x.stroke();
+    x.lineWidth = 7.5; x.strokeStyle = C.collar; x.stroke();
     x.beginPath(); x.ellipse(60, 56, 21, 15, 0, Math.PI * 0.18, Math.PI * 0.86);
     x.lineWidth = 2; x.strokeStyle = '#b03f43'; x.stroke();
     x.beginPath(); x.ellipse(60, 56, 21, 15, 0, Math.PI * 0.24, Math.PI * 0.8);
@@ -197,14 +199,14 @@ const Art = (() => {
     const hy = 38 + (o.br ? -0.8 : 0);
     // 耳朵（先画，被头压住底部）
     if (o.face === 'hurt') { // 受击耳朵压平
-      catEar(x, [46, 22, 62, 16], [0], [36, 8], false);
-      catEar(x, [78, 20, 92, 15], [0], [96, 10], true);
+      catEar(x, [46, 22, 62, 16], [0], [36, 8], false, C);
+      catEar(x, [78, 20, 92, 15], [0], [96, 10], true, C);
     } else {
-      catEar(x, [45, 22, 61, 15], [0], [40, 2], false);
-      catEar(x, [75, 20, 91, 14], [0], [88, 3], true);
+      catEar(x, [45, 22, 61, 15], [0], [40, 2], false, C);
+      catEar(x, [75, 20, 91, 14], [0], [88, 3], true, C);
     }
     // 头：渐变 + 双描边 + 脸侧绒毛
-    blob(x, circPath(64, hy, 26), rg(x, 58, hy - 8, 6, 34, [[0, CAT.headTop], [0.7, CAT.headBot], [1, '#ef8f45']]), { ow: 4 });
+    blob(x, circPath(64, hy, 26), rg(x, 58, hy - 8, 6, 34, [[0, C.headTop], [0.7, C.headBot], [1, C.headShade || '#ef8f45']]), { ow: 4 });
     // 脸侧绒毛（小三角）
     x.fillStyle = '#ffe9c9';
     for (const [fx, fy, dir] of [[40, hy + 6, -1], [88, hy + 4, 1]]) {
@@ -215,9 +217,9 @@ const Art = (() => {
     }
     // 额头条纹
     x.save(); x.globalAlpha = 0.92;
-    strokePath(x, c => { c.moveTo(58, hy - 24); c.lineTo(58, hy - 17); }, CAT.stripe, 4);
-    strokePath(x, c => { c.moveTo(65, hy - 26); c.lineTo(65, hy - 18); }, CAT.stripe, 4);
-    strokePath(x, c => { c.moveTo(72, hy - 24); c.lineTo(72, hy - 17); }, CAT.stripe, 4);
+    strokePath(x, c => { c.moveTo(58, hy - 24); c.lineTo(58, hy - 17); }, C.stripe, 4);
+    strokePath(x, c => { c.moveTo(65, hy - 26); c.lineTo(65, hy - 18); }, C.stripe, 4);
+    strokePath(x, c => { c.moveTo(72, hy - 24); c.lineTo(72, hy - 17); }, C.stripe, 4);
     x.restore();
     // 眼睛
     const eyeList = [[52, hy - 2, 7], [77, hy - 4, 8]];
@@ -231,8 +233,8 @@ const Art = (() => {
     // 鼻子 + 嘴 ω
     x.save(); x.translate(64, hy + 8);
     x.beginPath(); x.moveTo(-3.4, -1.6); x.lineTo(3.4, -1.6); x.lineTo(0, 2.6);
-    x.closePath(); x.fillStyle = CAT.nose; x.fill();
-    x.lineWidth = 2; x.strokeStyle = CAT.out; x.stroke();
+    x.closePath(); x.fillStyle = C.nose; x.fill();
+    x.lineWidth = 2; x.strokeStyle = C.out; x.stroke();
     x.restore();
     if (o.face === 'hurt') {
       strokePath(x, c => { c.moveTo(64, hy + 11); c.quadraticCurveTo(60, hy + 15, 57, hy + 11); c.quadraticCurveTo(64, hy + 17, 71, hy + 11); }, OUT, 2.2);
@@ -295,6 +297,21 @@ const Art = (() => {
   const P_DEAD = bake2(112, 112, x => drawCat(x, { dead: true }));
   const playerFrames = { walk: P_WALK, idle: P_IDLE, blink: P_BLINK, hurt: P_HURT, dead: P_DEAD };
   const playerWhite = whiteVersion(P_IDLE[0]);
+
+  /* ================= 欢呼小猫（宝箱大奖/金币头奖庆祝演出用） =================
+     同一套 drawCat 画法换毛色烘焙：每只 2 帧（蹲 / 跳，弹跳+抬爪+换尾），
+     演出层只做 drawImage 帧轮播 + 相位蹦跳，绝不每帧重绘 drawCat。 */
+  const CHEER_PALS = [
+    null, // 大橘本尊（默认配色）
+    { furTop: '#e8edf7', furBot: '#aeb9d6', headTop: '#eef2fb', headBot: '#b7c2dd', furMid: '#c9d2e6', headShade: '#a9b4d0', stripe: '#93a0c0', collar: '#5f8fe0' }, // 蓝灰
+    { furTop: '#9a8f8a', furBot: '#5f5551', headTop: '#a99d97', headBot: '#6b605b', furMid: '#7d726d', headShade: '#5c524e', stripe: '#4e4541', collar: '#ffd34d' }, // 烟灰
+    { furTop: '#fffdf6', furBot: '#e8ddc8', headTop: '#fffef9', headBot: '#efe6d4', furMid: '#f3ecdc', headShade: '#ddd0b8', stripe: '#d9c9a8', collar: '#7dc46a' }, // 雪白
+    { furTop: '#f7e3c0', furBot: '#c9a26b', headTop: '#f9e8ca', headBot: '#cfae7c', furMid: '#dcbf92', headShade: '#b8945f', stripe: '#a97f4b', collar: '#e05f9f' }, // 奶茶
+    { furTop: '#d8ccf5', furBot: '#a291d9', headTop: '#e0d6f8', headBot: '#ab9ade', furMid: '#bdb0e6', headShade: '#9887cc', stripe: '#8a79c2', collar: '#e0705f' }  // 香芋
+  ].map(p => p ? Object.assign({}, CAT, p) : CAT);
+  const CHEER_CATS = CHEER_PALS.map(pal => [0, 1].map(f => bake2(112, 112, x => drawCat(x, {
+    cat: pal, br: 0, tail: f, bob: f ? -7 : 0, legF: f ? -7 : 0, legB: f ? -2 : 0
+  }))));
 
   /* ----- 菜单大猫：坐姿举爪（两帧尾巴 + 眨眼） ----- */
   function drawMenuCat(x, o) {
@@ -1470,6 +1487,7 @@ const Art = (() => {
   return {
     OUT, OUTW, rr, ell, circ, eyeG, blush, rg,
     playerFrames, playerWhite, menuCat, menuCatBlink,
+    cheer: CHEER_CATS,
     E, EW, EB, EH,
     items, projs, slash, icons, decor, glows, eliteCrown,
     sky, drawLightning

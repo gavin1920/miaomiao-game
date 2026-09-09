@@ -1,0 +1,1051 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>喵都幸存者 · VI 视觉识别手册 v2.2(可爱像素版)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&display=swap" rel="stylesheet">
+<style>
+  /* 实机同款全量中文像素字体(M3 接入),由构建脚本内嵌 */
+  @font-face{
+    font-family:'Fusion Pixel';
+    src:url(data:font/woff2;base64,{{FONT:px}}) format('woff2');
+    font-display:swap;
+  }
+  /* ==========================================================
+     奶油团子 · VI 设计 token
+     (画风/角色与 lab/pixel-remake/STYLE.md 严格一致;
+      UI 层自 v2.2 起升级为「可爱像素」:圆角身板 + 像素骨感,
+      与游戏内「像素美术覆盖 v2.2」一致)
+     ========================================================== */
+  :root{
+    --ink:#453244;        /* R1 唯一描边/文字墨色 */
+    --ink-2:#2a1e33;      /* R5 眼睛/深墨 */
+    --cream:#fff6e0;      /* 奶油白(高光/受击闪) */
+    --shell:#f2e8d8;      /* 蛋壳底(展示/卡片,取自素材预览底色) */
+    --night:#232329;      /* 展示夜底(取自 preview-dark) */
+    --night-2:#2e2a3c;    /* 地图沥青夜色 */
+    --night-3:#3a3550;
+    --juice:#ffd9a0;      /* 大橘底色 */
+    --juice-d:#f4ab63;    /* 大橘阴影 */
+    --tab:#f0a058;        /* 虎斑纹 */
+    --red:#e05656;        /* 项圈红 = 主行动色 */
+    --red-l:#ff7d8e;      /* 项圈红·亮(按钮渐变高光端) */
+    --gold:#ffd76e;       /* 铃铛金 */
+    --gold-l:#ffe9a8;     /* 铃铛金·亮(按钮渐变高光端) */
+    --gold-d:#e0b23e;
+    --blush:#ff9d81;      /* 腮红 */
+    --earpink:#ffc4cf;    /* 耳内粉 */
+    --nose:#f2838f;       /* 鼻头 */
+    --gem-b:#6cc8ff; --gem-b-d:#3a9cd8;   /* 小鱼干·蓝(经验) */
+    --gem-g:#7de89a; --gem-g-d:#4cc474;   /* 小鱼干·绿 */
+    --gem-p:#ee6ee0; --gem-p-d:#cc4ec0;   /* 小鱼干·粉 */
+    --rat:#b7aab6; --rat-belly:#f2e8e6;   /* 鼠灰灰采样 */
+    --f-cn:'Fusion Pixel','ZCOOL KuaiLe','Microsoft YaHei','PingFang SC',sans-serif;
+    --f-px:'Fusion Pixel','ZCOOL KuaiLe',monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    background:repeating-conic-gradient(#26262e 0% 25%, var(--night) 0% 50%);
+    background-size:28px 28px;
+    color:var(--shell); font-family:var(--f-cn); padding:0 20px 90px;
+  }
+  .px{image-rendering:pixelated;image-rendering:crisp-edges}
+  .wrap{max-width:1120px;margin:0 auto}
+  .pxfont{font-family:var(--f-px)}
+  [hidden]{display:none!important}
+
+  /* ============ 顶部导航(像素条) ============ */
+  nav{position:sticky;top:0;z-index:60;margin:0 -20px;padding:10px 20px;
+    background:rgba(35,35,41,.94);border-bottom:2px solid var(--ink);
+    box-shadow:0 3px 0 rgba(20,14,26,.5)}
+  nav .row{max-width:1120px;margin:0 auto;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  nav .brand{display:flex;align-items:center;gap:8px;margin-right:8px;color:var(--gold);font-size:16px;letter-spacing:1px}
+  nav a{color:#cdc4cf;text-decoration:none;font-size:14px;letter-spacing:1px;
+    padding:3px 11px;border:2px solid transparent;border-radius:8px}
+  nav a:hover{color:var(--cream);border-color:var(--red);background:rgba(224,86,86,.18)}
+
+  /* ============ 封面 ============ */
+  .hero{min-height:560px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;position:relative;padding:64px 0 40px}
+  .hero .eyebrow{font-family:var(--f-px);color:var(--gem-b);letter-spacing:6px;font-size:13px;
+    text-shadow:2px 2px 0 rgba(20,14,26,.6)}
+  #logo-hero{margin:30px 0 8px;filter:drop-shadow(6px 6px 0 rgba(20,14,26,.55))}
+  h1.title{font-size:clamp(44px,8vw,80px);line-height:1.1;color:var(--cream);letter-spacing:6px;
+    text-shadow:3px 3px 0 var(--red),6px 6px 0 rgba(20,14,26,.4)}
+  .subtitle{font-family:var(--f-px);color:var(--gold);letter-spacing:8px;font-size:clamp(13px,2.2vw,20px);margin-top:10px;
+    text-shadow:2px 2px 0 rgba(20,14,26,.6)}
+  .tagline{margin-top:28px;font-size:clamp(17px,3vw,22px);color:#e8dced;letter-spacing:2px;
+    text-shadow:2px 2px 0 rgba(20,14,26,.6)}
+  .meta{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:24px}
+  .meta span{font-family:var(--f-px);font-size:12px;color:#cdc4df;background:#2c2c34;border:2px solid var(--ink);
+    border-radius:9px;box-shadow:3px 3px 0 rgba(20,14,26,.5);padding:5px 14px;letter-spacing:1px}
+  .meta span b{color:var(--gold)}
+  .scrolldown{position:absolute;bottom:14px;color:#8f8698;font-size:14px;letter-spacing:3px;
+    animation:bob 1.6s steps(2) infinite}
+  @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(6px)}}
+
+  /* ============ 奶油章节卡(v2.2 可爱像素:24px 圆角 + 奶油渐变 + 内奶白描边) ============ */
+  .panel{background:linear-gradient(180deg,#fffdf6,#ffefd6);color:var(--ink);border:3px solid var(--ink);
+    border-radius:24px;
+    box-shadow:5px 6px 0 rgba(30,20,30,.35), inset 0 0 0 2px #fff6e0;padding:28px 32px 34px;margin:52px 0;position:relative}
+  /* 猫耳面板(.ears):蛋壳底 + 墨线,几何与游戏内覆盖 v2.2 一致 */
+  .panel.ears::before,.panel.ears::after{content:'';position:absolute;top:-24px;width:44px;height:44px;
+    background:#ffefd6;border:3px solid var(--ink);border-radius:14px 4px 14px 4px;
+    box-shadow:inset 0 0 0 2px #fff6e0;z-index:0}
+  .panel.ears::before{left:12%;transform:rotate(-24deg)}
+  .panel.ears::after{right:12%;transform:rotate(114deg)}
+  .panel.ears>*{position:relative;z-index:1}
+  .sec-h{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:4px}
+  .sec-num{font-family:var(--f-px);font-size:24px;line-height:1;color:var(--gold);
+    background:var(--ink);padding:8px 10px 6px;letter-spacing:2px;border-radius:8px;box-shadow:3px 3px 0 rgba(69,50,68,.35)}
+  .sec-h h2{font-size:clamp(22px,3.2vw,28px);letter-spacing:2px;color:var(--ink);
+    text-shadow:2px 2px 0 rgba(224,86,86,.25)}
+  .sec-sub{font-size:14px;color:rgba(69,50,68,.75);letter-spacing:1px;margin-top:2px}
+  .sec-tag{margin-left:auto;font-family:var(--f-px);font-size:12px;letter-spacing:2px;color:var(--ink);
+    background:var(--cream);border:2px solid var(--ink);border-radius:9px;padding:4px 12px 3px;box-shadow:2px 2px 0 rgba(69,50,68,.3)}
+  h3{font-size:18px;letter-spacing:1px;color:var(--ink);margin:28px 0 12px;display:flex;align-items:center;gap:8px}
+  h3::before{content:'▸';color:var(--red);font-size:15px}
+  p.note{font-size:14.5px;line-height:1.9;color:rgba(69,50,68,.92)}
+  p.note b{color:var(--red)}
+  .hr{border:none;border-top:2px dashed rgba(69,50,68,.35);margin:26px 0}
+
+  /* ============ 通用小件(v2.2:小件 2px 墨线 + 2~3px 硬阴影,直角消灭) ============ */
+  .grid{display:grid;gap:14px}
+  .g2{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+  .g3{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+  .mini{background:var(--cream);border:2px solid var(--ink);border-radius:12px;box-shadow:3px 3px 0 rgba(69,50,68,.22);padding:14px 16px}
+  .mini h4{font-size:16px;letter-spacing:1px;margin-bottom:6px}
+  .mini p{font-size:13px;line-height:1.8;color:rgba(69,50,68,.92)}
+  .mini p b{color:var(--red)}
+  .stage{background:var(--night);border:2px solid var(--ink);border-radius:16px;box-shadow:inset 0 0 0 2px rgba(242,232,216,.06);
+    display:flex;align-items:center;justify-content:center;padding:16px}
+  .kw .big{font-size:34px;color:var(--red);line-height:1}
+  .kw h4{font-size:17px;margin:6px 0 4px}
+  .spec{font-family:var(--f-px);font-size:12px;color:rgba(69,50,68,.85);line-height:1.9;background:var(--cream);
+    border:2px dashed rgba(69,50,68,.4);border-radius:12px;padding:8px 12px;margin-top:12px}
+  .spec b{color:var(--red)}
+  table.spec-tab{width:100%;border-collapse:collapse;font-size:14px;margin-top:6px}
+  table.spec-tab td{padding:6px 10px;border-bottom:2px dashed rgba(69,50,68,.25);color:rgba(69,50,68,.92)}
+  table.spec-tab td:first-child{color:var(--red);white-space:nowrap;width:9em}
+  .canvrow{display:flex;gap:22px;flex-wrap:wrap;align-items:flex-end;justify-content:center}
+  .canvrow figure{text-align:center;margin:0}
+  .canvrow figcaption{font-size:12.5px;color:rgba(69,50,68,.8);margin-top:8px;letter-spacing:.5px;line-height:1.6}
+  .pxb{position:relative;display:inline-block;line-height:0}
+  .pxb .gl{position:absolute;inset:0;opacity:0;pointer-events:none;transition:opacity .15s;
+    background:
+      repeating-linear-gradient(0deg,rgba(69,50,68,.28) 0 1px,transparent 1px var(--gs,12px)),
+      repeating-linear-gradient(90deg,rgba(69,50,68,.28) 0 1px,transparent 1px var(--gs,12px))}
+  .pxb:hover .gl{opacity:1}
+  .on-dark .gl{background:
+      repeating-linear-gradient(0deg,rgba(242,232,216,.18) 0 1px,transparent 1px var(--gs,12px)),
+      repeating-linear-gradient(90deg,rgba(242,232,216,.18) 0 1px,transparent 1px var(--gs,12px))}
+
+  /* ============ 色彩 ============ */
+  .ratio{display:flex;height:72px;border:2px solid var(--ink);border-radius:12px;box-shadow:4px 4px 0 rgba(69,50,68,.22);margin:8px 0 4px;overflow:hidden}
+  .ratio div{display:flex;align-items:center;justify-content:center;font-family:var(--f-px);font-size:13px;letter-spacing:1px}
+  .swatches{display:grid;grid-template-columns:repeat(auto-fill,minmax(122px,1fr));gap:12px;margin-top:14px}
+  .sw{cursor:pointer;background:var(--cream);border:2px solid var(--ink);border-radius:12px;box-shadow:3px 3px 0 rgba(69,50,68,.22);
+    transition:transform .08s}
+  .sw:hover{transform:translate(-1px,-1px);box-shadow:4px 4px 0 rgba(69,50,68,.28)}
+  .sw:active{transform:translate(2px,2px);box-shadow:0 0 0 rgba(69,50,68,.28)}
+  .sw i{display:block;height:48px;border-bottom:2px solid var(--ink)}
+  .sw .t{display:block;padding:6px 8px 5px;font-size:12px;color:rgba(69,50,68,.85);line-height:1.55;text-align:center}
+  .sw .t b{display:block;font-size:12.5px;color:var(--ink)}
+  .sw .t .hx{font-family:var(--f-px)}
+  .catpal{display:flex;flex-direction:column;gap:10px;margin-top:12px}
+  .catpal .row{display:flex;align-items:stretch;gap:10px;background:var(--cream);border:2px solid var(--ink);
+    border-radius:12px;box-shadow:3px 3px 0 rgba(69,50,68,.2);padding:7px 12px}
+  .catpal .nm{width:7em;font-size:14px;letter-spacing:1px;flex:none;align-self:center}
+  .catpal .nm small{display:block;font-size:10.5px;color:rgba(69,50,68,.6)}
+  .catpal .cs{display:flex;gap:8px;flex:1}
+  .catpal .cs i{flex:1;min-width:22px;border:2px solid var(--ink);border-radius:8px;cursor:pointer;box-shadow:inset 2px 2px 0 rgba(255,255,255,.25)}
+
+  /* ============ 字体 ============ */
+  .type-demo{background:var(--cream);border:2px solid var(--ink);border-radius:16px;box-shadow:4px 4px 0 rgba(69,50,68,.22);padding:20px 24px}
+  .type-demo .big{font-size:42px;color:var(--ink);letter-spacing:4px;line-height:1.25;
+    text-shadow:3px 3px 0 var(--red),6px 6px 0 rgba(20,14,26,.18)}
+  .type-demo .pxline{font-family:var(--f-px);color:var(--gem-b-d);letter-spacing:4px;font-size:16px;margin-top:10px}
+  .ladder{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+  .ladder .l{display:flex;align-items:center;gap:14px;background:var(--cream);border:2px solid var(--ink);
+    border-radius:12px;box-shadow:3px 3px 0 rgba(69,50,68,.2);padding:8px 16px;flex-wrap:wrap}
+  .ladder .l small{margin-left:auto;color:rgba(69,50,68,.65);font-size:12px;letter-spacing:1px}
+
+  /* ============ 像素 UI Kit(v2.2 可爱像素:胶囊 + 渐变 + 实体按压) ============ */
+  .pbtn{display:inline-block;background:linear-gradient(180deg,var(--red-l),var(--red));color:var(--cream);
+    border:3px solid var(--ink);border-radius:999px;
+    box-shadow:0 4px 0 var(--ink);padding:9px 28px;font-family:var(--f-cn);font-size:16px;letter-spacing:2px;cursor:pointer;
+    transition:transform .12s, box-shadow .12s, filter .12s}
+  .pbtn:hover{transform:translateY(-2px);filter:brightness(1.07);box-shadow:0 5px 0 var(--ink)}
+  .pbtn:active{transform:translateY(4px);box-shadow:0 0 0 var(--ink)}
+  .pbtn.gold{background:linear-gradient(180deg,var(--gold-l),var(--gold));color:var(--ink)}
+  .pbtn.ghost{background:var(--cream);color:var(--ink)}
+  .pbtn.small{font-size:14px;padding:7px 20px;border-width:2px;box-shadow:0 3px 0 var(--ink)}
+  .pbtn.small:active{transform:translateY(3px)}
+  .tagd{font-family:var(--f-px);font-size:12px;border:2px solid var(--ink);border-radius:9px;padding:3px 10px 2px;letter-spacing:1px;
+    box-shadow:2px 2px 0 rgba(69,50,68,.25)}
+  .tagd.new{background:var(--gem-g)}
+  .tagd.opt{background:var(--gem-b)}
+  .tagd.bal{background:var(--gold)}
+  .tagd.fix{background:var(--gem-p)}
+  .tagd.hot{background:var(--red);color:var(--cream);animation:wig 1.2s steps(2) infinite}
+  @keyframes wig{0%,100%{transform:rotate(-2deg)}50%{transform:rotate(2deg)}}
+  .stat{background:var(--cream);border:2px solid var(--ink);border-radius:12px;box-shadow:3px 3px 0 rgba(69,50,68,.22);
+    padding:8px 6px 6px;text-align:center}
+  .stat .num{font-family:var(--f-px);font-size:24px;line-height:1.1;color:var(--red)}
+  .stat .lab{font-size:12px;color:rgba(69,50,68,.7);margin-top:2px}
+  .hpbar{display:inline-flex;gap:2px;background:var(--night-2);border:2px solid var(--ink);border-radius:8px;padding:3px;box-shadow:3px 3px 0 rgba(69,50,68,.3)}
+  .hpbar i{width:12px;height:14px;background:var(--red)}
+  .hpbar i:first-child{border-radius:4px 0 0 4px}
+  .hpbar i:last-child{border-radius:0 4px 4px 0}
+  .hpbar i.off{background:#4a3f4e}
+  .slot{width:52px;height:52px;display:inline-flex;align-items:center;justify-content:center;
+    background:var(--night-2);border:2px solid var(--ink);border-radius:12px;box-shadow:3px 3px 0 rgba(69,50,68,.3);position:relative}
+  .slot .lv{position:absolute;right:-7px;bottom:-7px;font-family:var(--f-px);font-size:12px;background:var(--red);
+    color:var(--cream);border:2px solid var(--ink);border-radius:999px;padding:1px 7px;line-height:1.2}
+  .keycap{display:inline-block;background:var(--cream);border:2px solid var(--ink);border-bottom-width:4px;border-radius:8px;
+    padding:3px 10px;font-family:var(--f-px);font-size:14px;color:var(--ink);margin:0 2px}
+
+  /* ---- v2.2 演示件:升级卡 / ⚙ 齿轮入口 / Lv 徽章 / 圆角阶梯 ---- */
+  .up-card{position:relative;background:linear-gradient(180deg,#fffdf6,#ffefd6);border:3px solid var(--ink);
+    border-radius:22px;box-shadow:5px 6px 0 rgba(30,20,30,.32), inset 0 0 0 2px #fff6e0;
+    padding:18px 18px 16px;cursor:pointer;transition:transform .12s;
+    font-family:var(--f-cn);color:var(--ink);text-align:left}
+  .up-card::before{content:'🐾';position:absolute;top:7px;left:9px;font-size:13px;opacity:.4;
+    transform:rotate(-18deg);pointer-events:none}
+  .up-card:hover{transform:translateY(-10px) rotate(-1deg) scale(1.03)}
+  .up-card h4{font-size:16px;letter-spacing:1px;margin:4px 0 6px}
+  .up-card p{font-size:12.5px;line-height:1.8;color:rgba(69,50,68,.9)}
+  .uc-tag{display:inline-block;background:linear-gradient(180deg,var(--gold-l),var(--gold));color:var(--ink);
+    border:2px solid var(--ink);border-radius:999px;box-shadow:2px 3px 0 rgba(69,50,68,.3);
+    font-family:var(--f-px);font-size:11.5px;padding:2px 12px;letter-spacing:1px}
+  .uc-tag.evo{background:linear-gradient(180deg,var(--red-l),var(--red));color:var(--cream)}
+  .uc-tag.new{background:linear-gradient(180deg,#a5f5bc,var(--gem-g));color:var(--ink)}
+  .gear-btn{width:42px;height:42px;padding:0;border:none;border-radius:50%;background:transparent;cursor:pointer;
+    image-rendering:pixelated;filter:drop-shadow(0 3px 0 rgba(20,14,26,.55));transition:transform .12s, filter .12s}
+  .gear-btn img{display:block;width:42px;height:42px;image-rendering:pixelated}
+  .gear-btn:hover{transform:translateY(-1px) rotate(20deg);filter:drop-shadow(0 4px 0 rgba(20,14,26,.55))}
+  .gear-btn:active{transform:translateY(3px);filter:drop-shadow(0 0 0 rgba(20,14,26,.55))}
+  .lv-badge{width:42px;height:42px;border-radius:50%;background:var(--red);border:3px solid var(--ink);
+    color:var(--cream);display:inline-flex;align-items:center;justify-content:center;
+    font-family:var(--f-px);font-size:15px;box-shadow:0 3px 0 rgba(20,14,26,.55)}
+  .radder{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+  .radder .r{background:var(--cream);border:2px solid var(--ink);box-shadow:3px 3px 0 rgba(69,50,68,.22);
+    font-family:var(--f-px);font-size:13px;padding:10px 14px;line-height:1;white-space:nowrap}
+
+  /* ============ 动效 ============ */
+  @keyframes demoPop{0%,22%{transform:scale(1)}8%{transform:scale(1.12)}14%{transform:scale(.96)}18%{transform:scale(1.03)}}
+  .demo-wig{animation:wig 1.2s steps(2) infinite}
+
+  /* ============ 应用 ============ */
+  .browser{background:#2c2c34;border:2px solid var(--ink);border-radius:12px;box-shadow:4px 4px 0 rgba(20,14,26,.5);padding:8px 10px;
+    display:flex;align-items:center;gap:8px}
+  .browser .tab{display:flex;align-items:center;gap:7px;background:var(--night);border:2px solid #4a4452;
+    border-bottom:none;border-radius:8px 8px 0 0;padding:5px 14px 7px;font-size:12.5px;color:#cdc4df;letter-spacing:1px}
+  .browser .dots{display:flex;gap:5px}
+  .browser .dots i{width:8px;height:8px;border-radius:50%;background:#4a4452}
+  .share-card{width:min(380px,100%);aspect-ratio:16/9;position:relative;overflow:hidden;
+    border:2px solid var(--ink);border-radius:16px;box-shadow:6px 6px 0 rgba(20,14,26,.5);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px}
+  .share-card .t{color:var(--cream);font-size:22px;letter-spacing:3px;text-shadow:3px 3px 0 var(--red)}
+  .share-card .s{font-family:var(--f-px);color:var(--gold);font-size:12px;letter-spacing:4px}
+  .share-card .chips{display:flex;gap:8px;margin-top:8px;align-self:flex-end;margin-right:18px}
+  .share-card .chips span{font-family:var(--f-px);font-size:12px;color:var(--cream);background:rgba(42,30,51,.85);
+    border:2px solid rgba(242,232,216,.35);border-radius:999px;padding:3px 10px;letter-spacing:1px}
+  .share-card .daju{position:absolute;left:12px;bottom:-6px}
+  .roster{display:flex;gap:14px;flex-wrap:wrap;justify-content:center}
+  .roster figure{text-align:center;margin:0}
+  .roster figcaption{font-size:12px;color:rgba(69,50,68,.85);margin-top:6px;line-height:1.5}
+
+  /* ============ Do / Don't ============ */
+  .rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:12px}
+  .rule{display:flex;gap:10px;background:var(--cream);border:2px solid var(--ink);border-radius:12px;box-shadow:3px 3px 0 rgba(69,50,68,.2);
+    padding:11px 14px;font-size:13.5px;line-height:1.75;color:rgba(69,50,68,.95);align-items:flex-start}
+  .rule i{flex:none;font-style:normal;font-size:15px}
+  .rule.ok i{color:#3d9c33}
+  .rule.no{border-color:var(--red)}
+  .rule.no i{color:var(--red)}
+
+  #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(90px);z-index:99;
+    background:var(--cream);color:var(--ink);border:2px solid var(--ink);border-radius:999px;box-shadow:4px 4px 0 rgba(20,14,26,.5);
+    font-family:var(--f-px);font-size:13px;letter-spacing:1px;padding:10px 24px;transition:transform .22s steps(3)}
+  #toast.on{transform:translateX(-50%) translateY(0)}
+
+  footer{color:#8f8698;font-size:13px;letter-spacing:1px;line-height:2.1;text-align:center;margin-top:56px}
+  footer b{color:var(--shell)}
+  footer .hx{font-family:var(--f-px)}
+
+  @media (max-width:640px){
+    .panel{padding:20px 16px 24px}
+    .sec-tag{margin-left:0}
+  }
+  @media (prefers-reduced-motion: reduce){
+    *{animation-duration:.01s !important;animation-delay:0s !important}
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="row">
+    <span class="brand">🐾 喵都 VI v2.2</span>
+    <a href="#brand">品牌</a><a href="#logo">标志</a><a href="#color">色彩</a><a href="#type">字体</a>
+    <a href="#pixel">画风</a><a href="#icons">图形</a><a href="#ui">界面</a><a href="#motion">动效</a>
+    <a href="#apps">应用</a><a href="#rules">守则</a>
+  </div>
+</nav>
+
+<!-- ================= 封面 ================= -->
+<header class="hero wrap" id="top">
+  <div class="eyebrow">MEOW SURVIVORS · BRAND VISUAL IDENTITY · CUTE PIXEL</div>
+  <div class="pxb on-dark" style="--gs:4px"><img id="logo-hero" class="px" width="192" height="192" src="{{ASSET:daju_idle1}}" data-seq="{{ASSET:daju_idle2}}|{{ASSET:daju_idle3}}" data-fps="8" alt="大橘"><div class="gl"></div></div>
+  <h1 class="title">喵都幸存者</h1>
+  <div class="subtitle">MEOW&nbsp;SURVIVORS</div>
+  <div class="tagline">把喵都的夜,装进小小的方格里。</div>
+  <div class="meta">
+    <span>VI 视觉识别手册 <b>v2.2</b> · 可爱像素版</span>
+    <span>依据 <b>STYLE.md v1</b> + 游戏内「像素美术覆盖 v2.2」</span>
+    <span>字体 <b>Fusion Pixel</b> 已实机接入</span>
+  </div>
+  <div class="scrolldown">▼ 往下翻,猫在等你</div>
+</header>
+
+<div class="wrap">
+
+<!-- ================= 00 品牌 ================= -->
+<section class="panel" id="brand">
+  <header class="sec-h"><span class="sec-num">00</span>
+    <div><h2>品牌 · Brand</h2><div class="sec-sub">第一原则:可爱。任何取舍与可爱冲突时,可爱优先</div></div>
+    <span class="sec-tag">STORY</span>
+  </header>
+  <p class="note"><b>喵都幸存者 Meow Survivors</b> 是猫主题的幸存者 like 小游戏:夜幕下的喵都,夜巡队长「大橘」独自面对无尽鼠潮。
+    像素重制方向的风格代号是<b>「奶油团子」</b>——头即全部、一切皆圆、豆眼里装着双高光;
+    <b>v2.2 起 UI 层升级为「可爱像素」</b>:圆角身板 + 像素骨感,直角一律消灭,详见章节「界面」。</p>
+
+  <h3>四个性格关键词</h3>
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">
+    <div class="mini kw"><div class="big">团</div><h4>团子感</h4><p><b>头即全部</b>:头宽 ≈ 身宽 ×1.35,头高占全身 55~60%。轮廓禁止尖角,像素角落一律内收 1px。</p></div>
+    <div class="mini kw"><div class="big">眼</div><h4>豆眼是灵魂</h4><p>圆角大豆眼,双眼宽 ≥ 脸宽 40%,<b>双高光</b>:左上主高光 + 右侧次高光。眼睛色全游戏统一 <b>#2a1e33</b>。</p></div>
+    <div class="mini kw"><div class="big">奶油</div><h4>奶油配色</h4><p>低饱和暖色,主体亮、背景暗,<b>扁平 2 阶</b>上色。阴影只许在下颌底、身体底缘、耳后侧。</p></div>
+    <div class="mini kw"><div class="big">夜</div><h4>夜色喵都</h4><p>背景深冷(#2e2a3c 系)、光源暖亮:灯箱、霓虹、摊位,全部<b>可爱化</b>,不做恐怖感。</p></div>
+  </div>
+
+  <h3>语气规范(用游戏里真实写好的话)</h3>
+  <div class="grid g2">
+    <div class="mini">
+      <h4>✓ 这样说话</h4>
+      <p>短句 + 叹号 + 叠词,像朋友喊你上场:<br>「<b>开始夜巡 !</b>」「<b>知道啦!</b>」「<b>开心收下!</b>」「<b>再来一局!</b>」<br>
+      失败不指责玩家:「<b>大橘累倒了…</b>」——把疲惫留给猫,把鼓励留给下一局。</p>
+    </div>
+    <div class="mini">
+      <h4>✗ 不这样说话</h4>
+      <p>不讽刺、不垃圾话、不用烂梗;不写「你死了」「菜就多练」;不堆营销词。
+      敌人也可爱:一切「凶」元素(牙/眉/爪)最小化表达,圆形 + 腮红不变。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 01 标志 ================= -->
+<section class="panel" id="logo">
+  <header class="sec-h"><span class="sec-num">01</span>
+    <div><h2>标志 · Logo</h2><div class="sec-sub">标志就是主角本身:生产素材即品牌,零漂移</div></div>
+    <span class="sec-tag">MARK</span>
+  </header>
+
+  <div class="grid g2" style="align-items:stretch">
+    <figure style="text-align:center;margin:0">
+      <div class="stage"><div class="pxb on-dark" style="--gs:4px"><img id="logo-main-img" class="px" width="192" height="192" src="{{ASSET:daju_idle1}}" alt="大橘 48×48"><div class="gl"></div></div></div>
+      <figcaption style="font-size:12.5px;color:rgba(69,50,68,.8);margin-top:10px">主标志 · 大橘 idle 帧(悬停查看 48×48 原生网格)</figcaption>
+    </figure>
+    <div>
+      <h3 style="margin-top:6px">为什么标志 = 游戏素材</h3>
+      <p class="note">品牌脸 = 主角大橘,<b>直接使用 48×48 生产精灵</b>,不做第二套"美化版"——
+      玩家在游戏里看到的就是海报上的,永不错位。识别要素一条不少:
+      <b>橘毛奶油嘴肚、虎斑纹、环纹粗尾、红项圈金铃铛、粉耳粉鼻、双高光豆眼、腮红 ω 嘴</b>。</p>
+      <table class="spec-tab">
+        <tr><td>原生网格</td><td>48×48(主角)/ 32×32(敌人)/ 64×64(鼠王)/ 96×96(老鼠妈妈)</td></tr>
+        <tr><td>头身比</td><td>头高占全身 55~60%,头最宽 ≈ 网格宽 73%</td></tr>
+        <tr><td>眼</td><td>6×6 圆角豆眼(小尺寸 4×4 起),双高光:左上主 + 右侧次,眼距 = 1 眼宽</td></tr>
+        <tr><td>腮红</td><td>#ff9d81,眼外下方 1px,3~4×2 椭圆,上排内收 1px</td></tr>
+        <tr><td>嘴</td><td>鼻 2×2 + ω 5×2,合计 ≤ 8×4,位于头高 62% 中线</td></tr>
+        <tr><td>耳</td><td>耳高 ≤ 头高 25%,内耳粉 #ffc4cf,双耳内距 ≥ 1 眼宽</td></tr>
+        <tr><td>描边</td><td>#453244 1px 全元素统一(R1,评审一票否决)</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <h3>小尺寸专用标志(16×16)</h3>
+  <div class="grid g2">
+    <div class="mini" style="display:flex;gap:26px;align-items:center;justify-content:center;padding:20px;flex-wrap:wrap">
+      <div class="pxb" style="--gs:3px"><canvas id="mark16-a" class="px"></canvas><div class="gl"></div></div>
+      <div class="pxb" style="--gs:2px"><canvas id="mark16-b" class="px"></canvas><div class="gl"></div></div>
+      <div class="pxb" style="--gs:1px"><canvas id="mark16-c" class="px"></canvas><div class="gl"></div></div>
+    </div>
+    <div class="mini"><h4>用法</h4>
+      <p>48 原生在 16/24px 屏宽下无法整数缩放,故专用一枚 <b>16×16 简化标志</b>(同规范重画:
+      豆眼双高光、腮红、ω 嘴、红项圈金铃铛一样不少)。用于 favicon / 水印 / 群头像,
+      只许 <b>1×/2×/3×(16/32/48px)</b> 整数放大。</p></div>
+  </div>
+
+  <h3>变体</h3>
+  <div class="canvrow">
+    <figure><div class="stage" style="padding:12px"><img class="px" width="120" height="120" src="{{ASSET:daju_idle1}}" alt="标准"></div><figcaption>标准 · 彩色(默认)</figcaption></figure>
+    <figure><div class="stage" style="padding:12px"><canvas id="v-mono" class="px" width="120" height="120"></canvas></div><figcaption>单色墨 #453244 · 单色印刷</figcaption></figure>
+    <figure><div class="stage" style="padding:12px"><canvas id="v-cream" class="px" width="120" height="120"></canvas></div><figcaption>奶油剪影 · 深底专用</figcaption></figure>
+    <figure><div class="mini" style="padding:12px"><canvas id="v-seal" class="px" width="120" height="120"></canvas></div><figcaption>项圈红印章 · 水印/贴纸</figcaption></figure>
+  </div>
+
+  <h3>安全空间与最小尺寸</h3>
+  <div class="grid g2">
+    <div class="mini">
+      <h4>安全空间</h4>
+      <div style="display:flex;gap:18px;align-items:center">
+        <div style="border:2px dashed rgba(69,50,68,.5);padding:16px;display:inline-block;background:var(--shell)">
+          <img class="px" width="48" height="48" src="{{ASSET:daju_idle1}}" alt="">
+        </div>
+        <p style="flex:1">标志四周留出 <b>半个头高(约 8 格)</b>的空白,任何文字、图形、裁切边不得进入。
+        左图虚线框即最小安全区。</p>
+      </div>
+    </div>
+    <div class="mini">
+      <h4>最小尺寸(整数倍,禁止 0.5×)</h4>
+      <div class="canvrow" style="gap:26px;margin-top:6px">
+        <figure><img class="px" width="32" height="32" src="{{ASSET:daju_idle1}}" alt=""><figcaption>2/3× · 32px<br>HUD 下限</figcaption></figure>
+        <figure><img class="px" width="48" height="48" src="{{ASSET:daju_idle1}}" alt=""><figcaption>1× · 48px<br>标准</figcaption></figure>
+        <figure><img class="px" width="96" height="96" src="{{ASSET:daju_idle1}}" alt=""><figcaption>2× · 96px<br>立绘</figcaption></figure>
+      </div>
+    </div>
+  </div>
+
+  <h3>误用(每一条都真的会被猫挠)</h3>
+  <div class="canvrow">
+    <figure><img class="px" width="120" height="165" src="{{ASSET:daju_idle1}}" alt=""><figcaption>✗ 非等比拉伸</figcaption></figure>
+    <figure><img src="{{ASSET:daju_idle1}}" style="width:120px;height:105px;image-rendering:auto" alt=""><figcaption>✗ 平滑/非整数缩放 · 糊</figcaption></figure>
+    <figure><img class="px" width="120" height="120" style="transform:rotate(-14deg)" src="{{ASSET:daju_idle1}}" alt=""><figcaption>✗ 旋转(只许水平镜像)</figcaption></figure>
+    <figure><img class="px" width="120" height="120" style="filter:hue-rotate(140deg) saturate(2)" src="{{ASSET:daju_idle1}}" alt=""><figcaption>✗ 任意换色(换色只走精英调色板管线)</figcaption></figure>
+  </div>
+</section>
+
+<!-- ================= 02 色彩 ================= -->
+<section class="panel" id="color">
+  <header class="sec-h"><span class="sec-num">02</span>
+    <div><h2>色彩 · Color</h2><div class="sec-sub">全局功能色固定,角色按 5 格模板派生,地图压暗一阶</div></div>
+    <span class="sec-tag">PALETTE</span>
+  </header>
+
+  <h3>60 · 30 · 10</h3>
+  <div class="ratio">
+    <div style="flex:6;background:var(--night);color:#cdc4df">夜色 60%(展示底/地图)</div>
+    <div style="flex:3;background:var(--shell);color:var(--ink)">蛋壳 30%(信息/界面)</div>
+    <div style="flex:1;background:var(--red);color:var(--cream)">10%</div>
+  </div>
+  <p class="note"><b>项圈红只给主行动与高光时刻</b>。饱和度纪律:地图 &lt; 道具 &lt; 角色,保证角色永远浮出画面。</p>
+
+  <h3>全局功能色(STYLE.md §2.1,全游戏固定,点击复制)</h3>
+  <div class="swatches" id="sw-func"></div>
+
+  <h3>角色色板模板(每个新角色填 5 格)</h3>
+  <p class="note" style="margin-bottom:4px">公式:<b>底色 / 阴影 / 腹或嘴周奶油 / 特征纹(可空) / 特征副色(可空)</b>。
+  阴影 = 底色向暖棕方向压 15~20%,<b>禁止偏冷</b>。下两行是生产素材实测采样。</p>
+  <div class="catpal" id="catpal"></div>
+
+  <h3>地图色板(夜色底,压暗角色一阶)</h3>
+  <div class="canvrow" style="gap:18px">
+    <figure><div class="pxb" style="--gs:8px"><img class="px" width="112" height="112" src="{{ASSET:map_oldtown}}"><div class="gl"></div></div><figcaption>老城夜市<br><span class="pxfont">#2e2a3c</span></figcaption></figure>
+    <figure><div class="pxb" style="--gs:8px"><img class="px" width="112" height="112" src="{{ASSET:map_sakura}}"><div class="gl"></div></div><figcaption>樱花公园<br><span class="pxfont">#3c3644</span></figcaption></figure>
+    <figure><div class="pxb" style="--gs:8px"><img class="px" width="112" height="112" src="{{ASSET:map_harbor}}"><div class="gl"></div></div><figcaption>港湾码头<br><span class="pxfont">#2e2a3c</span></figcaption></figure>
+    <figure><div class="pxb" style="--gs:8px"><img class="px" width="112" height="112" src="{{ASSET:map_onsen}}"><div class="gl"></div></div><figcaption>雪山温泉<br><span class="pxfont">#2e2a3c</span></figcaption></figure>
+    <figure><div class="pxb" style="--gs:8px"><img class="px" width="112" height="112" src="{{ASSET:map_carnival}}"><div class="gl"></div></div><figcaption>幽灵游乐园<br><span class="pxfont">#38323e</span></figcaption></figure>
+    <figure><div class="pxb" style="--gs:8px"><img class="px" width="112" height="112" src="{{ASSET:map_endless}}"><div class="gl"></div></div><figcaption>无尽街区<br><span class="pxfont">#2e2a3c</span></figcaption></figure>
+  </div>
+
+  <div class="grid g2" style="margin-top:22px">
+    <div class="mini"><h4>✓ 用色守则</h4>
+      <p>文字/描边一律 <b>#453244</b>,不用纯黑;夜底上文字用奶油 #fff6e0 与雾紫 #cdc4df;
+      每个界面<b>最多一个项圈红焦点</b>;地图每张 8~12 色,明度带彼此差 1 阶。</p></div>
+    <div class="mini"><h4>✗ 用色禁令</h4>
+      <p>不新增霓虹饱和色;不做彩虹渐变;阴影不许偏冷;
+      地面/建筑 tile 才允许 2~3 阶 + 受控棋盘抖动,<b>角色禁止抖动</b>(R6)。</p></div>
+  </div>
+</section>
+
+<!-- ================= 03 字体 ================= -->
+<section class="panel" id="type">
+  <header class="sec-h"><span class="sec-num">03</span>
+    <div><h2>字体 · Typography</h2><div class="sec-sub">像素字管数字与代号,快乐体管中文标题</div></div>
+    <span class="sec-tag">TYPE</span>
+  </header>
+
+  <div class="type-demo">
+    <div class="big">喵都幸存者,今晚也要加油喵!</div>
+    <div class="pxline">MEOW SURVIVORS 0123456789 HP 15:00 LV.70</div>
+  </div>
+  <div class="grid g2" style="margin-top:14px">
+    <div class="mini"><h4>像素字体 · Fusion Pixel Font(OFL 免费可商用)——已实机全量接入</h4>
+      <p>M3 起为游戏唯一 UI 字体:<b>本手册整页文字(含本段)内嵌的就是像素副本实机同款
+      zh_hans woff2</b>,所见即游戏所得。原生网格 <b>12px</b>,笔画对齐像素;数字/计分/色号同字体。</p></div>
+    <div class="mini"><h4>字号纪律 · 12 是原生,整数倍最锐</h4>
+      <p>理想字号 = <b>12 的倍数</b>(12/24/48);游戏实机允许 12~24px 间按需缩放
+      (14.5/17/22 均有使用),大标题与海报优先取整数倍。<br>
+      兜底链:<b>"ZCOOL KuaiLe" → "Microsoft YaHei"</b>(加载失败时可读即可)。</p></div>
+  </div>
+
+  <h3>字阶(实机取值)</h3>
+  <div class="ladder">
+    <div class="l"><span style="font-size:48px;letter-spacing:6px;color:var(--ink);text-shadow:4px 4px 0 rgba(224,86,86,.4)">标题 48</span><small>封面 / 海报(=12×4,整数倍)</small></div>
+    <div class="l"><span style="font-size:24px;letter-spacing:3px;color:var(--ink)">章节 / 面板标题 24</span><small>=12×2</small></div>
+    <div class="l"><span class="pbtn" style="font-size:16px">主按钮 16</span><small>主行动按钮 · 硬阴影 0 4px 0</small></div>
+    <div class="l"><span style="font-size:14px;color:rgba(69,50,68,.9)">正文 13~14.5 · 行高 1.9~2</span><small>说明 / 日志(实机缩放档)</small></div>
+    <div class="l"><span style="font-size:12px;color:rgba(69,50,68,.75);letter-spacing:1px">注释 12(原生)</span><small>色号 / 版权行 / 标签</small></div>
+  </div>
+
+  <div class="grid g2" style="margin-top:14px">
+    <div class="mini"><h4>✓ 字的规则</h4>
+      <p>标题投影只用<b>硬偏移</b>(如 2px 2px 0 / 4px 4px 0),不加模糊发光;英文副标字距 4~8px;
+      数字/计分/倒计时与正文同一套像素字。</p></div>
+    <div class="mini"><h4>✗ 字的禁令</h4>
+      <p>UI 只此一种字体,不混第二显示字体;不许斜体;
+      字体加载失败必须兜底可读;正文避免 12px 以下(像素发虚)。</p></div>
+  </div>
+</section>
+
+<!-- ================= 04 画风 ================= -->
+<section class="panel" id="pixel">
+  <header class="sec-h"><span class="sec-num">04</span>
+    <div><h2>画风 · Pixel Style</h2><div class="sec-sub">奶油团子七条硬规则:评审一票否决项</div></div>
+    <span class="sec-tag">RULES</span>
+  </header>
+
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(252px,1fr))">
+    <div class="mini"><h4><span class="pxfont" style="color:var(--red)">R1</span> 唯一描边色</h4><p>全游戏只有 <b>#453244</b>(暖梅棕)1px 描边。禁止黑色、禁止其他任何描边色。</p></div>
+    <div class="mini"><h4><span class="pxfont" style="color:var(--red)">R2</span> 干净像素</h4><p>角色<b>禁止抗锯齿像素、孤点杂点、半透明过渡</b>。要过渡,用 1px 锯齿排线,不用柔化。</p></div>
+    <div class="mini"><h4><span class="pxfont" style="color:var(--red)">R3</span> 扁平 2 阶</h4><p>角色只画底色+阴影两阶;阴影只出现在<b>下颌底、身体底缘、耳后侧</b>三处。</p></div>
+    <div class="mini"><h4><span class="pxfont" style="color:var(--red)">R4</span> 有脸必有三件</h4><p>眼(含双高光)+ 腮红 + ω 嘴,缺一不可。无脸物除外:宝石/金币/砖块。</p></div>
+    <div class="mini"><h4><span class="pxfont" style="color:var(--red)">R5</span> 眼睛统一</h4><p>眼睛 <b>#2a1e33</b>、高光 <b>#ffffff</b>,全游戏统一,任何角色不许换眼色(煤球金瞳走特批)。</p></div>
+    <div class="mini"><h4><span class="pxfont" style="color:var(--red)">R6</span> 抖动只属于地图</h4><p>地面/建筑 tile 允许 2~3 阶 + 受控棋盘抖动;<b>角色禁止抖动</b>。</p></div>
+    <div class="mini"><h4><span class="pxfont" style="color:var(--red)">R7</span> 整数像素动</h4><p>动效位移全部整数像素;squash &amp; stretch 幅度 ≤ <b>±1px/级</b>,只用于冲刺/入场/死亡。</p></div>
+    <div class="mini" style="background:var(--juice)"><h4>🐾 渲染基准</h4><p>网格 ×2 = 绘制单位,2K/100% 下 <b>1 网格像素 = 1 屏幕像素</b>;渲染必须
+      <span class="pxfont">imageSmoothingEnabled=false</span> / <span class="pxfont">image-rendering:pixelated</span>。</p></div>
+  </div>
+
+  <h3>缩放:对与错(用大橘真身演示)</h3>
+  <div class="canvrow">
+    <figure><img class="px" width="48" height="48" src="{{ASSET:daju_idle1}}" alt=""><figcaption>✓ 1× · 48px 原生</figcaption></figure>
+    <figure><img class="px" width="96" height="96" src="{{ASSET:daju_idle1}}" alt=""><figcaption>✓ 2× · 96px 整数倍</figcaption></figure>
+    <figure><img class="px" width="144" height="144" src="{{ASSET:daju_idle1}}" alt=""><figcaption>✓ 3× · 144px 整数倍</figcaption></figure>
+    <figure><img src="{{ASSET:daju_idle1}}" style="width:64px;height:56px;image-rendering:auto" alt=""><figcaption>✗ 平滑 + 非整数 · 糊</figcaption></figure>
+    <figure><img class="px" width="72" height="100" src="{{ASSET:daju_idle1}}" alt=""><figcaption>✗ 非等比拉伸 · 团子变麻花</figcaption></figure>
+  </div>
+</section>
+
+<!-- ================= 05 图形 ================= -->
+<section class="panel" id="icons">
+  <header class="sec-h"><span class="sec-num">05</span>
+    <div><h2>图形 · Elements</h2><div class="sec-sub">全部为生产素材:v2.2 起拾取物/道具/UI 件直接取自生产目录 pixel-assets/</div></div>
+    <span class="sec-tag">ASSETS</span>
+  </header>
+
+  <h3>拾取物语义(锁定,不可混用 · v2.2 全部重制)</h3>
+  <div class="canvrow">
+    <figure><div class="pxb" style="--gs:5px"><img class="px" width="90" height="75" src="{{ASSET:gem1}}"><div class="gl"></div></div><figcaption>小鱼干·银 18×15<br>经验(小)</figcaption></figure>
+    <figure><div class="pxb" style="--gs:5px"><img class="px" width="100" height="80" src="{{ASSET:gem2}}"><div class="gl"></div></div><figcaption>小鱼干·蓝 20×16<br>经验(中)</figcaption></figure>
+    <figure><div class="pxb" style="--gs:4px"><img class="px" width="92" height="72" src="{{ASSET:gem3}}"><div class="gl"></div></div><figcaption>小鱼干·金 23×18<br>经验(大)</figcaption></figure>
+    <figure><div class="pxb" style="--gs:5px"><img class="px" width="85" height="85" src="{{ASSET:coin}}"><div class="gl"></div></div><figcaption>金币 17×17 · 中心小鱼压印<br>货币</figcaption></figure>
+    <figure><div class="pxb" style="--gs:6px"><img class="px" width="84" height="72" src="{{ASSET:heart}}"><div class="gl"></div></div><figcaption>爱心 14×12<br>生命回复</figcaption></figure>
+    <figure><div class="pxb" style="--gs:3px"><img class="px" width="96" height="84" src="{{ASSET:chest}}"><div class="gl"></div></div><figcaption>宝箱 32×28<br>奖励</figcaption></figure>
+    <figure><div class="pxb" style="--gs:6px"><img class="px" width="96" height="96" src="{{ASSET:stamp}}"><div class="gl"></div></div><figcaption>猫爪印 16×16<br>全武器印章</figcaption></figure>
+  </div>
+  <p class="note" style="margin-top:12px">经验小鱼三档比例基准 = <b>原版矢量鱼</b>:鱼宽 ≈ 主角宽 0.40~0.48(主角 96px),
+    网格 18×15 → 20×16 → 23×18 逐档放大;配色<b>浅银蓝 → 亮蓝 → 金黄</b>,铃铛金只给最高档——
+    玩家扫一眼颜色就知道值不值得绕路。金币是唯一圆形拾取物,中心小鱼压印呼应「猫的经济就是小鱼」。</p>
+
+  <h3>武器图标(24×24 · 普通 → 进化带星光)</h3>
+  <div class="canvrow" style="gap:14px">
+    <figure><img class="px" width="72" height="72" src="{{ASSET:w_claw}}"><figcaption>猫爪</figcaption></figure>
+    <figure><img class="px" width="72" height="72" src="{{ASSET:w_claw_evo}}"><figcaption>→ 进化</figcaption></figure>
+    <figure><img class="px" width="72" height="72" src="{{ASSET:w_note}}"><figcaption>音波</figcaption></figure>
+    <figure><img class="px" width="72" height="72" src="{{ASSET:w_note_evo}}"><figcaption>→ 进化</figcaption></figure>
+    <figure><img class="px" width="72" height="72" src="{{ASSET:w_fish}}"><figcaption>烤鱼</figcaption></figure>
+    <figure><img class="px" width="72" height="72" src="{{ASSET:w_fish_evo}}"><figcaption>→ 进化</figcaption></figure>
+    <figure><img class="px" width="72" height="72" src="{{ASSET:w_axe}}"><figcaption>斧头</figcaption></figure>
+    <figure><img class="px" width="72" height="72" src="{{ASSET:w_axe_evo}}"><figcaption>→ 进化</figcaption></figure>
+    <figure><img class="px" width="72" height="72" src="{{ASSET:w_orbit}}"><figcaption>环绕</figcaption></figure>
+    <figure><img class="px" width="72" height="72" src="{{ASSET:w_orbit_evo}}"><figcaption>→ 进化</figcaption></figure>
+    <figure><img class="px" width="72" height="72" src="{{ASSET:w_aura}}"><figcaption>灵气</figcaption></figure>
+    <figure><img class="px" width="72" height="72" src="{{ASSET:w_aura_evo}}"><figcaption>→ 进化</figcaption></figure>
+    <figure><img class="px" width="72" height="72" src="{{ASSET:w_litter}}"><figcaption>猫砂</figcaption></figure>
+    <figure><img class="px" width="72" height="72" src="{{ASSET:w_litter_evo}}"><figcaption>→ 进化</figcaption></figure>
+    <figure><img class="px" width="72" height="72" src="{{ASSET:w_zap}}"><figcaption>静电</figcaption></figure>
+    <figure><img class="px" width="72" height="72" src="{{ASSET:w_zap_evo}}"><figcaption>→ 进化</figcaption></figure>
+  </div>
+
+  <h3>被动道具图标(v2.2 重制 20 级网格 + 其余 24×24 · 一眼看懂用途)</h3>
+  <div class="canvrow" style="gap:14px;align-items:flex-end">
+    <figure><img class="px" width="60" height="66" src="{{ASSET:i_milk}}"><figcaption>牛奶 20×22<br>回复</figcaption></figure>
+    <figure><img class="px" width="60" height="69" src="{{ASSET:i_firework}}"><figcaption>烟花 20×23<br>斜置窜天火箭 + 引信火花 + 爆炸星花<br>→ 读出「大范围伤害」</figcaption></figure>
+    <figure><img class="px" width="60" height="54" src="{{ASSET:i_vacuum}}"><figcaption>磁铁 20×18<br>马蹄 U 形红磁铁 + 银白磁极 + 被吸的小鱼<br>→ 读出「吸物品」</figcaption></figure>
+    <figure><img class="px" width="72" height="72" src="{{ASSET:i_catnip}}"><figcaption>猫薄荷 24×24</figcaption></figure>
+    <figure><img class="px" width="72" height="72" src="{{ASSET:i_koi}}"><figcaption>锦鲤 24×24</figcaption></figure>
+    <figure><img class="px" width="72" height="72" src="{{ASSET:i_gloves}}"><figcaption>手套 24×24</figcaption></figure>
+    <figure><img class="px" width="72" height="72" src="{{ASSET:i_magnetfish}}"><figcaption>磁铁鱼 24×24</figcaption></figure>
+    <figure><img class="px" width="72" height="72" src="{{ASSET:i_yarnball}}"><figcaption>毛线球 24×24</figcaption></figure>
+    <figure><img class="px" width="72" height="72" src="{{ASSET:i_bell}}"><figcaption>铃铛 24×24</figcaption></figure>
+  </div>
+  <p class="note" style="margin-top:12px">道具图标的设计目标:<b>不识字也能猜对用途</b>——磁铁必须画成经典马蹄形(红身银极),
+    并让一条小鱼正在被吸过去,「吸物品」不言自明;烟花斜置成刚点火升空的窜天老鼠姿势,引信火花 + 星形爆花指向「炸开一大片」。</p>
+
+  <h3>敌人图鉴(32×32 · 一切敌人也要可爱)</h3>
+  <div class="roster">
+    <figure><img class="px" width="80" height="80" src="{{ASSET:rat_idle1}}"><figcaption>灰灰鼠</figcaption></figure>
+    <figure><img class="px" width="80" height="80" src="{{ASSET:sparrow_idle1}}"><figcaption>小麻雀</figcaption></figure>
+    <figure><img class="px" width="80" height="80" src="{{ASSET:snail_idle1}}"><figcaption>蜗牛仔</figcaption></figure>
+    <figure><img class="px" width="80" height="80" src="{{ASSET:goose_idle1}}"><figcaption>大白鹅</figcaption></figure>
+    <figure><img class="px" width="80" height="80" src="{{ASSET:bat_idle1}}"><figcaption>蝙蝠仔</figcaption></figure>
+    <figure><img class="px" width="80" height="80" src="{{ASSET:raccoon_idle1}}"><figcaption>浣熊团子</figcaption></figure>
+    <figure><img class="px" width="80" height="80" src="{{ASSET:bulldog_idle1}}"><figcaption>斗牛犬</figcaption></figure>
+    <figure><img class="px" width="80" height="80" src="{{ASSET:pigeon_idle1}}"><figcaption>鸽子咕咕</figcaption></figure>
+    <figure><img class="px" width="80" height="80" src="{{ASSET:calico_idle1}}"><figcaption>三花姐(精英)</figcaption></figure>
+  </div>
+  <div class="canvrow" style="margin-top:18px;gap:40px">
+    <figure><img class="px" width="128" height="128" src="{{ASSET:ratking_idle1}}"><figcaption>鼠王·铁须 64×64</figcaption></figure>
+    <figure><img class="px" width="144" height="144" src="{{ASSET:mother_idle1}}"><figcaption>老鼠妈妈 96×96</figcaption></figure>
+  </div>
+
+  <h3>夜喵都氛围与城市地物(M3 新增,全部生产素材)</h3>
+  <div class="canvrow" style="gap:26px">
+    <figure><img class="px" width="100" height="100" src="{{ASSET:decor_moon}}"><figcaption>月亮 50×50</figcaption></figure>
+    <figure><img class="px" width="120" height="120" src="{{ASSET:decor_fountain}}"><figcaption>喷泉 60×60</figcaption></figure>
+    <figure><img class="px" width="96" height="128" src="{{ASSET:prop_stall}}"><figcaption>小吃摊 64×48</figcaption></figure>
+    <figure><img class="px" width="48" height="128" src="{{ASSET:prop_lamp}}"><figcaption>路灯 24×64</figcaption></figure>
+    <figure><img class="px" width="96" height="48" src="{{ASSET:prop_bench}}"><figcaption>长椅 48×24</figcaption></figure>
+    <figure><div class="pxb" style="--gs:4px"><img class="px" width="48" height="40" style="background:var(--night)" src="{{ASSET:elite_crown}}"><div class="gl"></div></div><figcaption>精英金冠 12×10<br>叠层标记</figcaption></figure>
+  </div>
+  <div class="mini" style="margin-top:14px;padding:10px;text-align:center">
+    <img class="px" src="{{ASSET:decor_skyline}}" style="width:100%;max-width:768px" alt="夜喵都天际线">
+    <p style="font-size:12px;color:rgba(69,50,68,.7);margin-top:6px">夜喵都天际线 512×105 —— 传播物料的横幅底纹,直接取用</p>
+  </div>
+
+  <h3>场景道具与特效</h3>
+  <div class="canvrow" style="gap:26px">
+    <figure><div class="pxb" style="--gs:4px"><img class="px" width="96" height="96" src="{{ASSET:p_light_on}}"><div class="gl"></div></div><figcaption>灯箱 · 亮</figcaption></figure>
+    <figure><img class="px" width="96" height="96" src="{{ASSET:p_light_off}}"><figcaption>灯箱 · 灭</figcaption></figure>
+    <figure><img class="px" width="96" height="96" src="{{ASSET:p_hydrant}}"><figcaption>消防栓</figcaption></figure>
+    <figure><img class="px" width="96" height="96" src="{{ASSET:p_vending}}"><figcaption>贩卖机</figcaption></figure>
+    <figure><img class="px" width="72" height="72" style="background:var(--night)" src="{{ASSET:fx_star1}}"><figcaption>受击星·起</figcaption></figure>
+    <figure><img class="px" width="72" height="72" style="background:var(--night)" src="{{ASSET:fx_star3}}"><figcaption>受击星·收</figcaption></figure>
+  </div>
+  <p class="note" style="margin-top:12px">夜地图的「光」由灯箱/霓虹承担:亮/灭两态,暖金 #ffd76e 打光,<b>可爱化霓虹,不做恐怖感</b>。</p>
+
+  <h3>UI 件(v2.2 新增 · 生产目录 pixel-assets/ui/)</h3>
+  <div class="canvrow" style="gap:40px">
+    <figure><div class="pxb" style="--gs:6px"><img class="px" width="126" height="126" style="background:var(--night)" src="{{ASSET:gear}}"><div class="gl"></div></div><figcaption>⚙ 齿轮 42×42(3× 展示)<br>设置入口 · 圆形像素按钮 1× 直显 42px<br>hover 轻转 20°(见章节「界面」)</figcaption></figure>
+  </div>
+</section>
+
+<!-- ================= 06 界面 ================= -->
+<section class="panel ears" id="ui">
+  <header class="sec-h"><span class="sec-num">06</span>
+    <div><h2>界面 · UI Kit</h2><div class="sec-sub">v2.2「可爱像素」:直角一律消灭,圆角身板 + 像素骨感;本章即游戏内「像素美术覆盖 v2.2」的规范</div></div>
+    <span class="sec-tag">KIT</span>
+  </header>
+
+  <p class="note"><b>骨(承 v2.1 不变)</b>:唯一描边墨色 <b>#453244</b>(面板/卡片/主按钮 3px、小件 2px);硬偏移阴影——面板
+    <b>5px 6px 0 rgba(30,20,30,.35)</b>、按钮 <b>0 4px 0 #453244</b>、小件 2~3px;色板:蛋壳 #f2e8d8 · 奶白 #fff6e0 ·
+    项圈红 #e05656(主行动)· 铃铛金 #ffd76e(次级)· 天蓝 #6cc8ff · 苔绿 #7de89a · 深底件 #2e2a3c;
+    标题错位阴影 <span class="pxfont">3px 3px 0 #e05656, 6px 6px 0 rgba(20,14,26,.4)</span>。
+    <b>肉(v2.2 可爱化)</b>:直角一律消灭——所有组件对号入座下面的圆角阶梯;面板回归奶油渐变并与墨线共存;恢复猫耳。</p>
+
+  <h3>圆角阶梯(全组件对号入座,禁止直角、禁止随意圆角)</h3>
+  <div class="radder">
+    <span class="r" style="border-radius:24px">面板 24</span>
+    <span class="r" style="border-radius:22px">升级卡/抽屉缘 22</span>
+    <span class="r" style="border-radius:16px">日志/reward 16</span>
+    <span class="r" style="border-radius:14px">map-chip 14</span>
+    <span class="r" style="border-radius:12px">stat/chip 12</span>
+    <span class="r" style="border-radius:9px">tag 9</span>
+    <span class="r" style="border-radius:8px">.key 8</span>
+    <span class="r" style="border-radius:999px">按钮胶囊 999</span>
+    <span class="r" style="border-radius:50%;width:58px;height:58px;display:inline-flex;align-items:center;justify-content:center;padding:0;text-align:center">圆点<br>50%</span>
+  </div>
+  <div class="spec">面板(可直接抄)→ <b>border:3px solid #453244; border-radius:24px;
+    background:linear-gradient(180deg,#fffdf6,#ffefd6);
+    box-shadow:5px 6px 0 rgba(30,20,30,.35), inset 0 0 0 2px #fff6e0;</b><br>
+    升级卡 22px 同构(阴影 α 0.32)· 日志条目 / reward / build-sec 16px · map-chip 14px ·
+    stat-box / chip / cfg-desc / cfg-text 12px · tag 9px · .key 8px · 圆点 50%;<br>
+    抽屉只圆左缘 → <b>border-radius:22px 0 0 22px; border-left:3px solid #453244;</b> ·
+    键帽用<b>加粗下边框</b>代替阴影 → <b>border:2px solid #453244; border-bottom-width:4px; border-radius:8px;</b></div>
+
+  <h3>按钮(胶囊 · 渐变 · 实体按压)</h3>
+  <div class="grid g2">
+    <div class="mini" style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;justify-content:center;padding:22px;background:linear-gradient(180deg,#fffdf6,#ffefd6)">
+      <button class="pbtn">开始夜巡 !</button>
+      <button class="pbtn gold">玩法说明</button>
+      <button class="pbtn ghost small">知道啦!</button>
+    </div>
+    <div class="mini"><h4>规范(可直接抄)</h4>
+      <p>一律<b>胶囊</b>(border-radius:999px)+ 3px 墨描边 + 硬阴影 <b>0 4px 0 #453244</b>,字距 2px;
+      主按钮红渐变 <b>linear-gradient(180deg,#ff7d8e,#e05656)</b> 奶油字,次级金渐变
+      <b>linear-gradient(180deg,#ffe9a8,#ffd76e)</b> 墨字,ghost = 蛋壳底墨字。<br>
+      <b>hover 上浮</b>:translateY(-2px) + brightness(1.07);<b>active 下压</b>:translateY(4px)、阴影归零——
+      像按实体键盘,不像按果冻。</p></div>
+  </div>
+
+  <h3>⚙ 设置入口 + Lv 徽章(画布右上成组)</h3>
+  <div class="grid g2">
+    <div class="mini" style="background:var(--night);border-color:var(--ink);display:flex;gap:26px;align-items:center;justify-content:center;padding:26px">
+      <span class="lv-badge">7</span>
+      <button class="gear-btn" type="button" title="设置"><img class="px" width="42" height="42" src="{{ASSET:gear}}" alt="设置"></button>
+    </div>
+    <div class="mini"><h4>规范</h4>
+      <p>⚙ 入口 = <b>42×42 圆形像素齿轮按钮</b>(生产资产 <span class="pxfont">pixel-assets/ui/gear.png</span>,42×42 网格 1× 直显):
+      hover <b>translateY(-1px) rotate(20deg)</b> 轻转 + 上浮,active 下压,阴影用
+      <span class="pxfont">drop-shadow(0 3px 0 rgba(20,14,26,.55))</span> 保留硬阴影下压感;
+      与画布右上 <b>Lv 圆徽章(直径 42px)</b> 右缘对齐、同列成组——右上角一族圆形件,识别即功能。</p></div>
+  </div>
+
+  <h3>升级卡(hover 上浮 + -1° 小歪头 + 🐾 爪印角饰)</h3>
+  <div class="grid g3">
+    <button class="up-card" type="button">
+      <span class="uc-tag new">新武器</span><h4>音波喵</h4>
+      <p>喵喵叫出环形音波,把最近的鼠潮推个趔趄。</p>
+    </button>
+    <button class="up-card" type="button">
+      <span class="uc-tag evo">进化</span><h4>烤鱼 · 巨大香鱼</h4>
+      <p>烤鱼进化成巨大香鱼,横扫一圈,顺便喂饱自己。</p>
+    </button>
+    <button class="up-card" type="button">
+      <span class="uc-tag">被动</span><h4>牛奶</h4>
+      <p>每天一瓶牛奶,最大生命 +1,骨头也结实了。</p>
+    </button>
+  </div>
+  <p class="note" style="margin-top:12px">升级卡 = 面板同构的 <b>22px</b> 圆角卡:蛋壳渐变 + 3px 墨线 + 内奶白描边;
+    左上角固定 <b>🐾 爪印角饰</b>(top:7px · left:9px · rotate(-18deg) · opacity:.4);
+    hover <b>translateY(-10px) rotate(-1deg) scale(1.03)</b>——上浮带一个小歪头;
+    选中态描边换项圈红 + 柔和金光。卡片分类角标用胶囊(新=苔绿 · 进化=红渐变 · 被动=金渐变)。</p>
+
+  <h3>标签(语义四色,取自小鱼干 + 铃铛金,9px 圆角)</h3>
+  <div class="mini">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <span class="tagd new">新</span><span class="tagd opt">优化</span>
+      <span class="tagd bal">平衡</span><span class="tagd fix">修复</span>
+      <span class="tagd hot">NEW</span>
+      <span class="tagd" style="background:var(--cream)">1 / 2 / 3</span>
+    </div>
+    <p class="note" style="margin-top:10px">更新日志与卡片的四色语义:<b>新=苔绿 · 优化=天蓝 · 平衡=金 · 修复=粉</b>,
+      2px 墨线 + 2px 硬阴影 + 9px 圆角。NEW 角标 ±2° 摇摆且 <span class="pxfont">steps(2)</span> 步进——重要的事蹦跶着说。</p>
+  </div>
+
+  <h3>数值框 / 血条 / 武器槽 / 键帽</h3>
+  <div class="grid g3">
+    <div style="display:flex;flex-direction:column;gap:10px;justify-content:center">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="stat"><div class="num">15:00</div><div class="lab">本局时长</div></div>
+        <div class="stat"><div class="num">1024</div><div class="lab">打跑敌人</div></div>
+      </div>
+      <div style="text-align:center"><span class="hpbar" id="hpbar-demo"></span>
+        <p style="font-size:12px;color:rgba(69,50,68,.7);margin-top:6px">血条:12 段,缺 2 段示警</p></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px;justify-content:center;align-items:center">
+      <div style="display:flex;gap:12px">
+        <span class="slot"><img class="px" width="36" height="36" src="{{ASSET:w_claw}}"><span class="lv">MAX</span></span>
+        <span class="slot"><img class="px" width="36" height="36" src="{{ASSET:w_fish}}"><span class="lv">3</span></span>
+        <span class="slot"><img class="px" width="36" height="36" src="{{ASSET:w_note}}"></span>
+        <span class="slot" style="opacity:.55"></span>
+      </div>
+      <div><span class="keycap">W</span><span class="keycap">A</span><span class="keycap">S</span><span class="keycap">D</span></div>
+    </div>
+    <div class="mini"><h4>规范</h4>
+      <p>小件 <b>2px 墨描边 + 12px 圆角 + 2~3px 硬阴影</b>,层层可叠;<br>
+      数值一律<b>像素字</b>(12px 的倍数),伤害/计时用项圈红;<br>
+      武器槽 52px 圆角 12px,Lv 角标胶囊 999px;进化槽描边换铃铛金 + 星光;<br>
+      键帽 = 加粗下边框(border-bottom-width:4px)+ 8px 圆角;<br>层级靠阴影层数,不靠透明度。</p></div>
+  </div>
+</section>
+
+<!-- ================= 07 动效 ================= -->
+<section class="panel" id="motion">
+  <header class="sec-h"><span class="sec-num">07</span>
+    <div><h2>动效 · Motion</h2><div class="sec-sub">帧是素材,呼吸是代码;一切位移都是整数像素</div></div>
+    <span class="sec-tag">MOTION</span>
+  </header>
+
+  <div class="grid g3" style="margin-bottom:16px">
+    <div class="mini" style="text-align:center">
+      <div class="ar" style="height:110px;display:flex;align-items:center;justify-content:center;background:var(--night);border:2px solid var(--ink);margin-bottom:8px">
+        <img class="px" width="96" height="96" src="{{ASSET:daju_idle1}}" data-seq="{{ASSET:daju_idle2}}|{{ASSET:daju_idle3}}" data-fps="8" alt="idle">
+      </div>
+      <p><b>idle · 2~3 帧 @8fps</b><br>眨眼 + 耳动;身体 1px 呼吸由代码做</p>
+    </div>
+    <div class="mini" style="text-align:center">
+      <div class="ar" style="height:110px;display:flex;align-items:center;justify-content:center;background:var(--night);border:2px solid var(--ink);margin-bottom:8px">
+        <img class="px" width="96" height="96" src="{{ASSET:daju_walk1}}" data-seq="{{ASSET:daju_walk2}}|{{ASSET:daju_walk3}}|{{ASSET:daju_walk4}}" data-fps="12" alt="walk">
+      </div>
+      <p><b>walk · 4 帧 @10~12fps</b><br>左右 1px 摆 + 抬爪交替 + 1px 弹跳</p>
+    </div>
+    <div class="mini" style="text-align:center">
+      <div class="ar" style="height:110px;display:flex;align-items:center;justify-content:center;background:var(--night);border:2px solid var(--ink);margin-bottom:8px">
+        <img class="px" width="96" height="96" id="die-demo" src="{{ASSET:daju_die1}}" data-seq="{{ASSET:daju_die2}}|{{ASSET:daju_die3}}" data-fps="8" alt="die">
+      </div>
+      <p><b>die · 3 帧 @8fps</b><br>压扁 → 团成圆 → 灰化+小星星(可爱化,不见血)</p>
+    </div>
+  </div>
+
+  <div class="grid g2">
+    <div class="mini" style="text-align:center">
+      <img id="walk-gif" src="{{ASSET:gif_dajuwalk}}" style="image-rendering:pixelated;width:300px;max-width:100%" alt="walk 动图证据">
+      <p style="margin-top:8px"><b>行走循环实拍</b>(素材评审用的 GIF 证据,帧时序 1:2 = 起势快回落慢)</p>
+    </div>
+    <div class="mini">
+      <table class="spec-tab">
+        <tr><td>受击 hurt</td><td>1 帧 0.12s,全图白闪 #fff6e0,代码回退位移</td></tr>
+        <tr><td>Boss 专用</td><td>+2~4 帧:入场坠落压扁、施法前摇膨胀、技能帧</td></tr>
+        <tr><td>弹幕</td><td>2 帧摆动;拖尾/光晕由代码绘制</td></tr>
+        <tr><td>拾取物</td><td>2~4 帧 @6fps:宝石明暗交替、金币旋转、浮动代码做</td></tr>
+        <tr><td>UI 悬浮/按压</td><td>hover 上浮 1~3px、active 下压至阴影归零;升级卡 hover 上浮 10px + -1° 歪头;⚙ 齿轮 hover 转 20°</td></tr>
+        <tr><td>红线</td><td>位移全整数;sq&amp;st ≤ ±1px/级;单效 ≤ 0.7s;reduced-motion 降级</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 08 应用 ================= -->
+<section class="panel" id="apps">
+  <header class="sec-h"><span class="sec-num">08</span>
+    <div><h2>应用 · Applications</h2><div class="sec-sub">同一只团子,处处报到</div></div>
+    <span class="sec-tag">APPS</span>
+  </header>
+
+  <h3>浏览器标签(favicon = 16×16 专用标志)</h3>
+  <div class="mini" style="padding:0;overflow:hidden;max-width:560px">
+    <div class="browser"><div class="dots"><i></i><i></i><i></i></div>
+      <div class="tab"><canvas id="fav" class="px" width="16" height="16" style="width:16px;height:16px"></canvas>喵都幸存者 Meow Survivors</div>
+    </div>
+    <div style="height:46px;background:var(--night);display:flex;align-items:center;padding:0 18px;color:#8f8698;font-size:13px;letter-spacing:1px">
+      gavin1920.github.io/miaomiao-game — 深夜蓝底 + 蛋壳面板 + 项圈红行动</div>
+  </div>
+
+  <h3>社交战报卡(保存战报 / 分享)</h3>
+  <div class="grid g2">
+    <div style="display:flex;justify-content:center">
+      <div class="share-card" id="share-card">
+        <div class="t">大橘的夜巡战报</div>
+        <div class="s">MEOW SURVIVORS</div>
+        <div class="chips"><span>🌙 第 3 轮</span><span>⏱ 15:00</span><span>🐭 ×1024</span></div>
+        <img class="px daju" width="96" height="96" src="{{ASSET:daju_idle1}}" alt="">
+      </div>
+    </div>
+    <div class="mini"><h4>规范</h4>
+      <p>比例 16:9;底 = 夜色地图 tile 平铺(#2e2a3c);大橘立绘置左下角;<br>
+      数据胶囊 ≤ 3 个,数字用像素字;项圈红只给标题硬阴影。
+      <b>截图即品牌,每一张战报都是海报。</b></p></div>
+  </div>
+
+  <h3>实机运行证据(M4 · 像素副本)</h3>
+  <div class="mini" style="padding:8px;background:var(--night);border-color:var(--ink)">
+    <img src="{{ASSET:battle_live}}" class="px" style="width:100%;display:block" alt="实机运行">
+  </div>
+  <p class="note" style="margin-top:10px">同一份游戏代码,渲染层切到像素精灵 + Fusion Pixel 字体后的<b>实机画面</b>:
+  夜市 tile、暖光、像素字 UI 已全部在线(章节「界面」的像素 Kit 即为此状态的规范)。</p>
+
+  <h3>HUD 组合(重制目标样式)</h3>
+  <div class="mini" style="background:var(--night);border-color:var(--ink);padding:16px;display:flex;gap:18px;align-items:center;justify-content:center;flex-wrap:wrap">
+    <span class="hpbar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class="off"></i><i class="off"></i><i class="off"></i><i class="off"></i></span>
+    <span style="display:inline-flex;align-items:center;gap:6px"><img class="px" width="36" height="30" src="{{ASSET:gem1}}"><b class="pxfont" style="font-size:24px;color:var(--gold)">×128</b></span>
+    <span style="display:inline-flex;align-items:center;gap:6px"><img class="px" width="34" height="34" src="{{ASSET:coin}}"><b class="pxfont" style="font-size:24px;color:var(--gold)">×36</b></span>
+    <span style="display:inline-flex;align-items:center;gap:6px"><b class="pxfont" style="font-size:24px;color:var(--cream)">LV.70</b></span>
+    <span style="display:inline-flex;gap:8px;margin-left:8px">
+      <span class="slot" style="width:44px;height:44px"><img class="px" width="30" height="30" src="{{ASSET:w_claw}}"></span>
+      <span class="slot" style="width:44px;height:44px"><img class="px" width="30" height="30" src="{{ASSET:w_fish}}"></span>
+      <span class="slot" style="width:44px;height:44px;opacity:.55"></span>
+    </span>
+  </div>
+  <p class="note" style="margin-top:10px">深底 HUD 上所有描边仍为 #453244,文字奶油/金;图标一律原生整数倍放大。</p>
+</section>
+
+<!-- ================= 09 守则 ================= -->
+<section class="panel" id="rules">
+  <header class="sec-h"><span class="sec-num">09</span>
+    <div><h2>守则 · Do &amp; Don't</h2><div class="sec-sub">记不住手册时,背这一页就够</div></div>
+    <span class="sec-tag">CHEATSHEET</span>
+  </header>
+  <div class="rules">
+    <div class="rule ok"><i>✓</i><span>描边只用暖梅棕 #453244 1px;眼睛 #2a1e33 + 白高光全游戏统一。</span></div>
+    <div class="rule ok"><i>✓</i><span>有脸必有三件:豆眼双高光 + 腮红 #ff9d81 + ω 嘴;耳内粉 #ffc4cf。</span></div>
+    <div class="rule ok"><i>✓</i><span>角色扁平 2 阶,阴影只许在下颌底、身体底缘、耳后侧,禁止偏冷。</span></div>
+    <div class="rule ok"><i>✓</i><span>48 网格 ×2 绘制,pixelated 渲染,整数倍缩放,2K 下 1 格 = 1 屏。</span></div>
+    <div class="rule ok"><i>✓</i><span>动效整数位移:idle 2~3 帧 8fps、walk 4 帧、死亡压扁+灰化+星星。</span></div>
+    <div class="rule ok"><i>✓</i><span>UI 圆角对号入座:面板 24 / 卡 22 / 胶囊 999 / 小件 8~12;hover 上浮、active 压平阴影。</span></div>
+    <div class="rule no"><i>✗</i><span>不抗锯齿、不孤点杂点、不做半透明过渡、角色不抖动。</span></div>
+    <div class="rule no"><i>✗</i><span>不新增霓虹饱和色、不做彩虹渐变、正文不出现纯黑 #000。</span></div>
+    <div class="rule no"><i>✗</i><span>平滑缩放、非整数倍缩放、旋转素材(只许水平镜像)。</span></div>
+    <div class="rule no"><i>✗</i><span>UI 出现直角或模糊盒阴影;按钮只许硬偏移阴影 0 4px 0,不按果冻。</span></div>
+    <div class="rule no"><i>✗</i><span>凶相元素超最小表达;死亡不见血;UI 只用 Fusion Pixel 一种字体,失败必须兜底可读。</span></div>
+    <div class="rule no"><i>✗</i><span>不讽刺玩家、不用烂梗、文案不出现「死 / 失败 / 惩罚」。</span></div>
+  </div>
+
+  <hr class="hr">
+  <p class="note" style="text-align:center">
+    🐾 风格唯一权威:<b>lab/pixel-remake/STYLE.md</b>(改规范先改它);UI「可爱像素」层以游戏内
+    <b>「像素美术覆盖 v2.2」</b>(index.html)为准。
+    手册由生成器产出:<span class="pxfont">node tools/gen/build_vi_manual.mjs</span>
+    (生产素材更新后重跑,页面内嵌的精灵图会同步;拾取物/道具取自 <span class="pxfont">pixel-assets/</span>,其余取自 <span class="pxfont">lab/pixel-remake/assets/</span>)
+    · 手册源模板:<span class="pxfont">tools/gen/vi_manual.template.html</span></p>
+</section>
+
+<footer>
+  <b>喵都幸存者 Meow Survivors · VI 视觉识别手册 v2.2 · 可爱像素版</b><br>
+  <span class="hx">v2.2 变更:UI 升级「可爱像素」——直角清零、圆角阶梯、胶囊渐变按钮、猫耳面板、⚙ 42px 齿轮入口、升级卡爪印角饰;拾取物/道具改采生产目录 pixel-assets/(小鱼三档 18~23 网格重制 · 金币 17×17 · 牛奶 20×22 · 烟花 20×23 · 磁铁 20×18 · 齿轮 42×42)</span><br>
+  风格基准 <span class="hx">STYLE.md v1(M0)</span> · 界面基准 <span class="hx">游戏内「像素美术覆盖 v2.2」</span> · 进度 <span class="hx">M1-M4 已交付(实机运行通过)</span> · 素材
+  <span class="hx">lab/pixel-remake + pixel-assets</span> · 字体 <span class="hx">Fusion Pixel Font(OFL) / ZCOOL KuaiLe</span> ·
+  手册自身也按本 VI 设计:夜色棋盘底、奶油渐变猫耳卡、墨描边、硬阴影、胶囊按钮 🐾
+</footer>
+
+</div>
+<div id="toast">已复制 🐾</div>
+
+<script>
+'use strict';
+/* ================================================================
+   16×16 小尺寸专用标志(按 STYLE.md 规范手绘:豆眼双高光/腮红/ω嘴/项圈铃铛)
+   ================================================================ */
+const MARK = [
+"..KK........KK..",
+".KPPK......KPPK.",
+"..KOOOOOOOOOOK..",
+".KOOSSOOOOOOSSK.",
+".KOWEEOOOOEWEOK.",
+".KOEEWOOOOEEWOK.",
+".KOEEEOOOOEEEOK.",
+".KOEEEOOOOEEEOK.",
+".KBBOOONNOOOBBK.",
+".KOOOOONNOOOOOK.",
+".KOOOOKOOKOOOOK.",
+".KOOOCCCCCCOOOK.",
+".KRRRRRGGRRRRRK.",
+"...KOCCCCCCOK...",
+"...KCKCCCCKCK...",
+];
+const PAL_MARK = {
+  K:'#453244', O:'#ffd9a0', S:'#f0a058', C:'#fff6e0', P:'#ffc4cf',
+  N:'#f2838f', E:'#2a1e33', W:'#ffffff', B:'#ff9d81', R:'#e05656', G:'#ffd76e'
+};
+
+function drawPX(cv, rows, pal, scale){
+  const h = rows.length, w = rows[0].length;
+  cv.width = w * scale; cv.height = h * scale;
+  cv.style.width = cv.width + 'px'; cv.style.height = cv.height + 'px';
+  const x = cv.getContext('2d');
+  x.imageSmoothingEnabled = false;
+  for (let gy = 0; gy < h; gy++) for (let gx = 0; gx < w; gx++){
+    const ch = rows[gy][gx];
+    if (ch === '.' || ch === undefined) continue;
+    if (!pal[ch]){ console.warn('缺色', ch, gy, gx); continue; }
+    x.fillStyle = pal[ch];
+    x.fillRect(gx * scale, gy * scale, scale, scale);
+  }
+  return cv;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  /* 16 标志:3 个尺寸 + favicon + 页签 */
+  drawPX(document.getElementById('mark16-a'), MARK, PAL_MARK, 3);
+  drawPX(document.getElementById('mark16-b'), MARK, PAL_MARK, 2);
+  drawPX(document.getElementById('mark16-c'), MARK, PAL_MARK, 1);
+  const fav = drawPX(document.createElement('canvas'), MARK, PAL_MARK, 2);
+  document.getElementById('fav').getContext('2d').drawImage(fav, 0, 0);
+  (() => { const l = document.createElement('link'); l.rel = 'icon'; l.href = fav.toDataURL(); document.head.appendChild(l); })();
+
+  /* 变体:source-in 整图换色(标准素材 → 单色墨/奶油/项圈红) */
+  const markSrc = document.getElementById('logo-main-img').src;
+  const swap = (cvId, color) => {
+    const cv = document.getElementById(cvId);
+    const img = new Image();
+    img.onload = () => {
+      const x = cv.getContext('2d');
+      x.imageSmoothingEnabled = false;
+      cv.width = 48; cv.height = 48;
+      cv.style.width = '120px'; cv.style.height = '120px';
+      x.drawImage(img, 0, 0);
+      x.globalCompositeOperation = 'source-in';
+      x.fillStyle = color; x.fillRect(0, 0, 48, 48);
+    };
+    img.src = markSrc;
+  };
+  swap('v-mono', '#453244');
+  swap('v-cream', '#fff6e0');
+  swap('v-seal', '#e05656');
+
+  /* 帧动画:data-seq 的 <img> 按帧率交换(整数像素位移,不做补间) */
+  document.querySelectorAll('img[data-seq]').forEach(img => {
+    const seq = [img.src, ...img.dataset.seq.split('|')];
+    const fps = parseFloat(img.dataset.fps || '8');
+    let i = 0;
+    setInterval(() => { i = (i + 1) % seq.length; img.src = seq[i]; }, 1000 / fps);
+  });
+  /* 死亡序列:压扁→团圆→灰化,播完停 1.4s 再循环(评审看的是节奏) */
+  (() => {
+    const img = document.getElementById('die-demo');
+    if (!img) return;
+    const seq = [img.src, ...img.dataset.seq.split('|')];
+    let i = 0;
+    setInterval(() => {
+      i += 1;
+      if (i >= seq.length + 7) i = 0;             /* 尾帧多停 7 拍,星星散尽再重来 */
+      img.src = seq[Math.min(i, seq.length - 1)];
+    }, 125);
+  })();
+
+  /* 战报卡底:老城夜市 tile 平铺 */
+  (() => {
+    const card = document.getElementById('share-card');
+    if (!card) return;
+    const mapImg = document.querySelectorAll('#color .canvrow img.px')[0];
+    if (mapImg) { card.style.backgroundImage = `url(${mapImg.src})`; card.style.backgroundSize = '64px 64px'; }
+    card.style.backgroundColor = '#2e2a3c';
+  })();
+
+  /* 血条 demo */
+  (() => {
+    const hp = document.getElementById('hpbar-demo');
+    if (!hp) return;
+    for (let i = 0; i < 12; i++){ const s = document.createElement('i'); if (i >= 8) s.className = 'off'; hp.appendChild(s); }
+  })();
+
+  /* 色板:全局功能色 + 角色模板(点击复制) */
+  const toast = document.getElementById('toast');
+  const copy = (hex, name) => {
+    const done = () => { toast.textContent = `已复制 🐾 ${name} ${hex}`; toast.classList.add('on');
+      clearTimeout(toast._t); toast._t = setTimeout(() => toast.classList.remove('on'), 1600); };
+    if (navigator.clipboard) navigator.clipboard.writeText(hex).then(done, done); else done();
+  };
+  const swEl = (name, en, hex) => {
+    const d = document.createElement('div'); d.className = 'sw';
+    d.innerHTML = `<i style="background:${hex}"></i><span class="t"><b>${name}</b>${en}<br><span class="hx">${hex}</span></span>`;
+    d.onclick = () => copy(hex, name);
+    return d;
+  };
+  const put = (id, list) => list.forEach(([n, e, h]) => document.getElementById(id).appendChild(swEl(n, e, h)));
+  put('sw-func', [
+    ['描边·墨','R1 唯一','#453244'], ['眼睛','R5','#2a1e33'], ['高光/受击闪','R5','#ffffff'],
+    ['腮红','全角色','#ff9d81'], ['耳内粉','全角色','#ffc4cf'], ['鼻头','全角色','#f2838f'],
+    ['项圈红','主行动','#e05656'], ['铃铛金','奖励/金光','#ffd76e'], ['大橘底','主角','#ffd9a0'],
+    ['大橘阴影','主角','#f4ab63'], ['虎斑纹','主角','#f0a058'], ['奶油白','腹/嘴周','#fff6e0'],
+    ['蛋壳底','展示/卡片','#f2e8d8'], ['夜色底','展示','#232329'], ['沥青夜','地图','#2e2a3c'], ['沥青亮','地图','#3a3550'],
+  ]);
+  const cp = document.getElementById('catpal');
+  [['大橘','夜巡队长 · 48×48',[['#ffd9a0','底色'],['#f4ab63','阴影'],['#fff6e0','奶油'],['#f0a058','虎斑'],['#e05656','项圈']]],
+   ['鼠灰灰','敌人 · 32×32 实测',[['#b7aab6','底色'],['#f2e8e6','奶油腹'],['#ffc4cf','耳内粉'],['#f2838f','鼻头'],['#2a1e33','眼']]],
+  ].forEach(([nm, ttl, cols]) => {
+    const r = document.createElement('div'); r.className = 'row';
+    const sws = cols.map(([h, lab]) => `<i style="background:${h}" data-hex="${h}" title="${lab} ${h}"></i>`).join('');
+    r.innerHTML = `<span class="nm">${nm}<small>${ttl}</small></span><span class="cs">${sws}</span>`;
+    r.querySelectorAll('i').forEach(i => i.onclick = () => copy(i.dataset.hex, nm));
+    cp.appendChild(r);
+  });
+});
+</script>
+</body>
+</html>

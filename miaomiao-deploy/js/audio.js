@@ -462,14 +462,49 @@ const Sfx = (() => {
     victory() {
       [72, 76, 79, 84, 88, 91].forEach((n, i) => tone({ type: 'square', f0: midi(n), dur: 0.2, vol: 0.15, at: i * 0.12, echo: 0.4 }));
       [96].forEach(n => tone({ type: 'square', f0: midi(n), dur: 0.7, vol: 0.17, at: 0.75, echo: 0.4 }));
+    },
+    // —— 宝箱老虎机演出音效（第五版意见1）——
+    slotTick() { // 老虎机滚动 tick：短促机械哒哒声（连发走 SFX_GAPS 节流）
+      tone({ type: 'square', f0: 2100, f1: 1500, dur: 0.03, vol: 0.05, lp: 5200 });
+      noise({ dur: 0.025, ftype: 'highpass', f0: 3600, vol: 0.03 });
+    },
+    slotStop() { // 奖励窗口落定「哐当」：低频闷响 + 金属点缀
+      tone({ type: 'sine', f0: 230, f1: 70, dur: 0.16, vol: 0.3, atk: 0.004 });
+      noise({ dur: 0.08, f0: 1200, f1: 300, vol: 0.14 });
+      tone({ type: 'square', f0: midi(81), dur: 0.08, vol: 0.08, at: 0.02, lp: 3000 });
+    },
+    rareDing() { // 稀有奖励「叮！」：清亮钟声 + 高频闪光噪
+      tone({ type: 'triangle', f0: midi(96), dur: 0.4, vol: 0.2, echo: 0.35 });
+      tone({ type: 'sine', f0: midi(103), dur: 0.5, vol: 0.1, at: 0.02, echo: 0.35 });
+      noise({ dur: 0.25, ftype: 'highpass', f0: 6000, vol: 0.045 });
+    },
+    dingDong() { // 金币小奖「叮咚」：两音铃铛
+      tone({ type: 'triangle', f0: midi(93), dur: 0.12, vol: 0.16 });
+      tone({ type: 'triangle', f0: midi(86), dur: 0.28, vol: 0.16, at: 0.11, echo: 0.3 });
+    },
+    fanfare(big) { // 大奖号角：上行琶音 + 镲；big=顶格全开多两音长镲
+      const notes = big ? [72, 76, 79, 84, 88, 91] : [72, 76, 79, 84];
+      notes.forEach((n, i) => tone({ type: 'square', f0: midi(n), dur: 0.16, vol: 0.15, at: i * 0.085, echo: 0.35 }));
+      noise({ at: notes.length * 0.085 - 0.05, dur: big ? 0.7 : 0.45, ftype: 'highpass', f0: 4800, vol: big ? 0.08 : 0.05 });
+      if (big) tone({ type: 'square', f0: midi(96), dur: 0.6, vol: 0.16, at: notes.length * 0.085, echo: 0.4 });
+    },
+    meowChoir() { // 群猫欢呼喵合奏：多声部 meowOne 随机音高错落（绕过喵叫冷却的专用合成，静音时同样全安静）
+      for (let i = 0; i < 6; i++) {
+        meowOne(i * 0.07 + U.rand(0, 0.05), {
+          f0: U.rand(480, 780), f1: U.rand(850, 1150), f2: U.rand(420, 640),
+          dur: U.rand(0.18, 0.3), vol: U.rand(0.12, 0.18), bright: U.rand(0.95, 1.4), vib: U.rand(6, 9)
+        });
+      }
     }
   };
 
   // ---------- 音效防过载包装（中后期防噪声墙） ----------
   // 高频武器音效按名字限最小间隔；0.12 秒窗口内非优先音效超过并发预算直接让路；
   // 白名单（升级/宝箱/进化/boss/受伤/结算等一次性大事件）永不节流。BGM 走 tone/noise 不经过这里。
-  const SFX_GAPS = { hit: 70, pop: 80, thunder: 130, bigPop: 150, coin: 50, milk: 90, vacuum: 220, firework: 220, gem: 40 };
-  const SFX_PRIORITY = new Set(['lvl', 'chest', 'evolve', 'boss', 'playerHurt', 'heartbeat', 'gameOver', 'victory', 'click', 'motherWarn', 'motherSkill']);
+  const SFX_GAPS = { hit: 70, pop: 80, thunder: 130, bigPop: 150, coin: 50, milk: 90, vacuum: 220, firework: 220, gem: 40, slotTick: 40 };
+  // 一次性大事件音效永不节流（slotStop/稀有叮/叮咚/号角/喵合奏都是宝箱演出的一次性定音）
+  const SFX_PRIORITY = new Set(['lvl', 'chest', 'evolve', 'boss', 'playerHurt', 'heartbeat', 'gameOver', 'victory', 'click', 'motherWarn', 'motherSkill',
+    'slotStop', 'rareDing', 'dingDong', 'fanfare', 'meowChoir']);
   const gateLast = {}, voiceWin = [];
   let sfxCnt = 0, sfxWinT = 0, sfxRateV = 0;
   function allowSfx(name) {

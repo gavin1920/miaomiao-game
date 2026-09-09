@@ -9,11 +9,13 @@
   /* ================= 画布与视口 ================= */
   const cv = document.getElementById('game');
   const ctx = cv.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
   let vw = 0, vh = 0, dpr = 1, vignette = null;
   let zoom = 1, worldW = 0, worldH = 0; // 世界层缩放：小屏缩小世界保证视野；worldW/H 为可视范围对应的世界尺寸
   /* 意见1（第三版）：整体缩放档位。1X = 当前视野（小屏优先保证可视范围）；4X = 旧版大小
-     （视野 4 倍化改版前的角色尺寸，即世界缩放 ×2，按档位在 1X~4X 间线性过渡）。 */
-  const ZOOM_LV = [1, 2, 3, 4];
+     （视野 4 倍化改版前的角色尺寸，即世界缩放 ×2，档位在 1X~4X 间线性过渡）。
+     意见3（第五版）：档位精简为 1→2→4 三档循环；悬浮钮移入 ⚙ 设置抽屉。 */
+  const ZOOM_LV = [1, 2, 4];
   let userZoom = U.storage.get('meow_zoom', 1);
   if (!ZOOM_LV.includes(userZoom)) userZoom = 1;
   /* 意见2（第三版）：游戏加速档位 1X/2X/3X（只作用游戏逻辑时间，演出与菜单不受影响） */
@@ -56,11 +58,15 @@
   };
   const show = (el, on) => el.classList[on ? 'remove' : 'add']('hidden');
 
-  /* ================= 缩放 / 加速档位控制 ================= */
+  /* ================= 缩放 / 加速档位 / 音效开关 ================= */
+  /* 单一真源：档位与静音只在 main.js 的 setZoom/setSpeed/toggleMuted 里改；变化经 updateToggleBtns 广播
+     meow-toggles 事件，config_panel.js 监听它刷新暂停面板的三钮文字（音效/缩放/加速与「继续夜巡」同级）。 */
   function updateToggleBtns() {
-    const zb = $('btn-zoom'), sb = $('btn-speed');
-    if (zb) zb.textContent = '🔍 ' + userZoom + 'X';
-    if (sb) sb.textContent = '⏩ ' + gameSpeed + 'X';
+    try {
+      if (typeof document.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
+        document.dispatchEvent(new CustomEvent('meow-toggles', { detail: { zoom: userZoom, speed: gameSpeed, muted: Sfx.isMuted() } }));
+      }
+    } catch (e) { /* 无头测试桩等环境没有 CustomEvent 时静默跳过 */ }
   }
   function setZoom(lv) {
     if (!ZOOM_LV.includes(lv) || lv === userZoom) return;
@@ -70,8 +76,10 @@
     if (G.state !== 'menu') banner('🔍 画面缩放 ' + lv + 'X' + (lv === 4 ? '（旧版大小）' : ''), 1.5);
     updateToggleBtns();
   }
+  // 取模循环（修复旧版 U.clamp 夹到端点后点不动的卡死）：1 → 2 → 4 → 1；dir=-1 反向
   function cycleZoom(dir) {
-    setZoom(ZOOM_LV[U.clamp(ZOOM_LV.indexOf(userZoom) + dir, 0, ZOOM_LV.length - 1)]);
+    const i = ZOOM_LV.indexOf(userZoom);
+    setZoom(ZOOM_LV[((i < 0 ? 0 : i) + dir + ZOOM_LV.length) % ZOOM_LV.length]);
   }
   function setSpeed(lv) {
     if (!SPD_LV.includes(lv)) return;
@@ -80,9 +88,17 @@
     if (G.state === 'play') banner('⏩ 游戏速度 ' + lv + 'X', 1.5);
     updateToggleBtns();
   }
+  // 单击循环 1X → 2X → 3X → 1X（⚙ 设置抽屉与快捷键共用）
+  function cycleSpeed() { setSpeed(SPD_LV[(SPD_LV.indexOf(gameSpeed) + 1) % SPD_LV.length]); }
+  // 音效开关在暂停面板三钮一行（与 🔍 缩放 / ⏩ 加速同级；从平衡设置抽屉移出）；
+  // M 快捷键与面板按钮共用同一真源，按钮文字不在这里直接改，统一走 updateToggleBtns 广播刷新
+  function toggleMuted() {
+    Sfx.setMuted(!Sfx.isMuted());
+    updateToggleBtns();
+  }
 
   /* ================= 城市地图（无限网格，chunk 缓存） ================= */
-  const CHUNK = 512, ROAD = 96, SIDEWALK = 22, CHUNK_PAD = 48;
+  const CHUNK = 512, ROAD = 96, SIDEWALK = 22, CHUNK_PAD = 48, PIX = 4;
   let curMap = null; // 手工地图（MAPS 里的固定面积地图）；null = 经典无限街区
   const chunkCache = new Map();
   function blockType(cx, cy) {
@@ -94,10 +110,13 @@
   }
   function genChunk(cx, cy) {
     const PAD = CHUNK_PAD, S = CHUNK + PAD * 2;
+    const PIX = 4; // 地形低清烘焙：整个世界 1/4 分辨率，像素化
     const c = document.createElement('canvas');
-    c.width = S; c.height = S;
+    c.width = S / PIX; c.height = S / PIX;
     const x = c.getContext('2d');
+    x.imageSmoothingEnabled = false;
     x.lineJoin = 'round'; x.lineCap = 'round';
+    x.scale(1 / PIX, 1 / PIX);
     x.translate(PAD, PAD);
     const lamps = [], signs = [];
     const bx = cx * CHUNK, by = cy * CHUNK;
@@ -627,6 +646,17 @@
     for (let i = 0; i < n; i++) {
       const a = U.rand(0, TAU), s = U.rand(40, 160);
       part({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 40, life: U.rand(0.3, 0.6), size: U.rand(3, 6), col, kind: 'star', grav: 300 });
+    }
+  }
+  // 彩纸（金币抽奖 ≥10% 大奖庆祝）：多彩小星屑向上抛洒再洒落
+  function confettiAt(x, y) {
+    const cols = ['#ffd34d', '#ff8fb5', '#8fe08a', '#9fd8f2', '#e2b7ff'];
+    let n = 18;
+    if (G.parts.length > FX.particleLodAt) n = Math.ceil(n / 2); // 粒子过载时生成量减半（LOD）
+    for (let i = 0; i < n; i++) {
+      const a = U.rand(-Math.PI, 0); // 上半圆：全部往上抛
+      const s = U.rand(60, 200);
+      part({ x: x + U.rand(-12, 12), y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: U.rand(0.5, 0.95), size: U.rand(3, 5.5), col: U.pick(cols), kind: 'star', grav: 260 });
     }
   }
   function heartAt(x, y) { part({ x, y, vy: -46, life: 1.1, size: 7, col: '#ff8fb5', kind: 'heart' }); }
@@ -1695,13 +1725,38 @@
     const need = DATA.xpNeed(G.player.lv || 1);
     const v = Math.max(1, Math.round(need * pct));
     addXp(v);
-    if (pct >= 0.10) {
-      // ≥10%：金币大奖式演出（数值直达，演出加强）
+    const pc = Math.round(pct * 100);
+    // 世界层特效只在实际游戏画面播（宝箱金币位走宝箱面板自己的联动演出，世界层只留粒子/飘字，恢复后立刻可见）
+    const inWorld = G.state === 'play';
+    if (pct >= 0.80) {
+      // ≥80%：最高规格——烟花 + 全屏金光 + 震屏 + 群猫欢呼迷你版
+      popStars(x, y, '#ffd34d', 26);
+      part({ x, y, life: 0.9, size: 70, col: '#ffd34d', kind: 'ring' });
+      goldFloat(x, y - 18, '💥 ' + pc + '% 经验大奖 +' + v);
+      if (inWorld) {
+        G.flash = 0.55; addShake(10, true);
+        Sfx.sfx.firework(); Sfx.sfx.fanfare(true); Sfx.sfx.meowChoir();
+        worldCelebrate();
+      }
+    } else if (pct >= 0.30) {
+      // ≥30%：接近头奖——短 fanfare + 震屏 + 彩纸
+      popStars(x, y, '#ffd34d', 20);
+      confettiAt(x, y - 6);
+      part({ x, y, life: 0.8, size: 60, col: '#ffd34d', kind: 'ring' });
+      goldFloat(x, y - 16, '✨ ' + pc + '% 经验 +' + v);
+      if (inWorld) { addShake(6, true); Sfx.sfx.fanfare(false); }
+    } else if (pct >= 0.10) {
+      // ≥10%：金币大奖式演出（数值直达，演出加强 + 彩纸）
       popStars(x, y, '#ffd34d', 18);
+      confettiAt(x, y - 6);
       part({ x, y, life: 0.7, size: 55, col: '#ffd34d', kind: 'ring' });
-      goldFloat(x, y - 16, (Math.round(pct * 100)) + '% 经验 +' + v);
-      Sfx.sfx.chest();
-      if (pct >= 0.80) { G.flash = 0.35; addShake(8, true); Sfx.sfx.firework(); }
+      goldFloat(x, y - 16, pc + '% 经验 +' + v);
+      if (inWorld) Sfx.sfx.rareDing();
+    } else if (pct >= 0.05) {
+      // ≥5%：低概率大额经验——星星爆 + 金色飘字升级 + 专属「叮咚」
+      popStars(x, y, '#ffe9a8', 12);
+      goldFloat(x, y - 15, '⭐ ' + pc + '% 经验 +' + v);
+      if (inWorld) Sfx.sfx.dingDong();
     } else {
       goldFloat(x, y - 14, '+' + v);
     }
@@ -1839,7 +1894,231 @@
     heartAt(PP.x + 12 * (PP.flip ? -1 : 1), PP.y - 42);
   }
 
-  /* ================= 宝箱 ================= */
+  /* ================= 宝箱（老虎机式开箱演出） ================= */
+  /* 演出会话令牌：每场演出（开箱 / 金币头奖）++fxTok；所有 setTimeout 回调触发前先核对令牌，
+     「跳过 / 收下 / 下一场」都会作废旧令牌并清空定时器——游戏恢复 play 后绝无残留回调乱触发。 */
+  let fxTok = 0;
+  const fxTimers = new Set();
+  function fxLater(tok, ms, fn) {
+    const t = setTimeout(() => { fxTimers.delete(t); if (tok === fxTok) fn(); }, ms);
+    fxTimers.add(t);
+  }
+  function fxTimersClear() { for (const t of fxTimers) clearTimeout(t); fxTimers.clear(); }
+  // 彻底收摊：作废回调 + 停庆祝层 +（若挂在 body）送回宝箱面板
+  function fxStopAll() {
+    fxTok++;
+    fxTimersClear();
+    chestFx.on = false;
+    if (chestFx.timer) { clearTimeout(chestFx.timer); chestFx.timer = null; }
+    chestFx.parts.length = 0; chestFx.cats.length = 0; chestFx.flash = 0; chestFx.rays = 0;
+    if (chestFx.cv && chestFx.cv.className) chestFxMount(false);
+  }
+  /* ---- 庆祝覆盖层（#chest-fx）：彩纸/烟花/金光/群猫欢呼全画在这层 canvas 上，
+          指针穿透、纯装饰，不碰游戏世界的渲染循环。宝箱态挂在 #screen-chest 里；
+          金币头奖（≥80%）时临时挂到 body 播「迷你版」。setTimeout 链独立驱动
+          （state='chest' 时主循环不推进世界，演出层自己走节拍）。 ---- */
+  const chestFx = { cv: null, cx: null, on: false, timer: null, t: 0, parts: [], cats: [], rays: 0, flash: 0 };
+  const CONF_COLS = ['#ffd34d', '#ff8fb5', '#8fe08a', '#9fd8f2', '#e2b7ff', '#fff6d8'];
+  function chestFxMount(world) {
+    const cv = chestFx.cv || (chestFx.cv = $('chest-fx'));
+    if (!cv) return;
+    const parent = world ? document.body : $('screen-chest');
+    if (parent && parent.appendChild && cv.parentNode !== parent) parent.appendChild(cv); // 浏览器=移动节点 / 桩环境=安全空操作
+    cv.className = world ? 'world' : '';
+    cv.width = window.innerWidth; cv.height = window.innerHeight;
+    chestFx.cx = cv.getContext('2d');
+  }
+  // 一颗烟花：爆出一圈彩色火星 + 轻微金闪
+  function chestFxBoom() {
+    const fx = chestFx, w = fx.cv.width, h = fx.cv.height;
+    const bx = U.rand(0.2, 0.8) * w, by = U.rand(0.15, 0.45) * h;
+    for (let i = 0; i < 26; i++) {
+      const a = (i / 26) * TAU, s = U.rand(120, 260);
+      fx.parts.push({ kind: 'spark', x: bx, y: by, vx: Math.cos(a) * s, vy: Math.sin(a) * s, col: U.pick(CONF_COLS), t: 0, life: U.rand(0.5, 0.9), r: U.rand(2.5, 4.5) });
+    }
+    fx.flash = Math.max(fx.flash, 0.25);
+  }
+  // 启动一场庆祝：level 1=稀有（金闪+星星） / 2=大奖（彩纸横扫+金光+烟花三连+群猫欢呼）
+  function chestFxStart(level) {
+    const fx = chestFx;
+    fx.on = true; fx.t = 0;
+    fx.flash = Math.max(fx.flash, level >= 2 ? 0.6 : 0.35);
+    const w = fx.cv.width, h = fx.cv.height;
+    if (level >= 1) { // 稀有起：从面板宝箱位置炸开一蓬金色星星
+      for (let i = 0; i < 22; i++) {
+        const a = U.rand(0, TAU), s = U.rand(80, 240);
+        fx.parts.push({ kind: 'spark', x: w / 2, y: h * 0.32, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 60, col: U.pick(['#ffd34d', '#fff6d8', '#ffe9a8']), t: 0, life: U.rand(0.5, 0.9), r: U.rand(2, 4) });
+      }
+    }
+    if (level >= 2) {
+      fx.rays = 2.4; // 金光加速旋转时长（秒）
+      // 全屏彩纸横扫：左右两股对吹
+      for (let i = 0; i < 80; i++) {
+        const left = i % 2 === 0;
+        fx.parts.push({ kind: 'conf', x: left ? -20 : w + 20, y: Math.random() * h * 0.7,
+          vx: (left ? 1 : -1) * U.rand(160, 420), vy: U.rand(-260, -60), rot: U.rand(0, TAU), vr: U.rand(-9, 9),
+          w2: U.rand(6, 11), h2: U.rand(4, 8), col: U.pick(CONF_COLS), t: 0, life: U.rand(1.2, 2.2) });
+      }
+      // 群猫欢呼：底部一排 6 只换色小猫（烘焙 2 帧轮播 + 随机相位蹦跳，绝不每帧重绘 drawCat）
+      fx.cats.length = 0;
+      for (let i = 0; i < 6; i++) {
+        fx.cats.push({ i: i % Art.cheer.length, x: w * (0.5 + (i - 2.5) * 0.09), ph: U.rand(0, TAU), scale: U.rand(0.8, 1.1) });
+      }
+      const tok = fxTok; // 烟花三连（跟随当前演出会话，跳过即作废）
+      for (let i = 0; i < 3; i++) fxLater(tok, 150 + i * 320, chestFxBoom);
+    }
+    if (!fx.timer) chestFxLoop();
+  }
+  function chestFxLoop() {
+    const fx = chestFx;
+    if (!fx.on) { fx.timer = null; return; }
+    fx.timer = setTimeout(chestFxLoop, 33);
+    const c = fx.cx; if (!c) return;
+    const dt = 1 / 30, w = fx.cv.width, h = fx.cv.height;
+    fx.t += dt;
+    fx.flash = Math.max(0, fx.flash - dt * 1.6);
+    fx.rays = Math.max(0, fx.rays - dt);
+    for (let i = fx.parts.length - 1; i >= 0; i--) {
+      const p = fx.parts[i]; p.t += dt;
+      if (p.t >= p.life) { fx.parts.splice(i, 1); continue; }
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      if (p.kind === 'conf') { p.vy += 320 * dt; p.vx *= 1 - dt * 1.2; p.rot += p.vr * dt; } // 彩纸：受重力飘落
+      else { p.vy += 170 * dt; p.vx *= 1 - dt * 1.6; p.vy *= 1 - dt * 1.6; } // 火星：爆开减速坠落
+    }
+    c.clearRect(0, 0, w, h);
+    // 金光加速旋转（大奖限定）
+    if (fx.rays > 0) {
+      c.save(); c.translate(w / 2, h * 0.42); c.rotate(fx.t * (fx.rays > 1 ? 5 : 2.2));
+      c.globalAlpha = Math.min(0.42, fx.rays * 0.2);
+      c.fillStyle = 'rgba(255,214,90,.55)';
+      const R = Math.hypot(w, h) * 0.7;
+      for (let i = 0; i < 12; i++) {
+        c.rotate(TAU / 12);
+        c.beginPath(); c.moveTo(0, 0); c.arc(0, 0, R, -0.09, 0.09); c.closePath(); c.fill();
+      }
+      c.restore();
+    }
+    // 粒子：彩纸片 / 烟花火星 / 欢呼星星
+    for (const p of fx.parts) {
+      c.save(); c.globalAlpha = Math.max(0, 1 - p.t / p.life);
+      if (p.kind === 'conf') {
+        c.translate(p.x, p.y); c.rotate(p.rot); c.fillStyle = p.col;
+        c.fillRect(-p.w2 / 2, -p.h2 / 2, p.w2, p.h2);
+      } else {
+        c.fillStyle = p.col; c.beginPath(); c.arc(p.x, p.y, p.r, 0, TAU); c.fill();
+      }
+      c.restore();
+    }
+    // 群猫欢呼：帧轮播 + 相位蹦跳，蹦跳时偶尔冒星星
+    for (const ct of fx.cats) {
+      const jump = Math.sin(fx.t * 9 + ct.ph);
+      const size = 64 * ct.scale;
+      const y = h - size * 0.62 - Math.max(0, jump) * 16;
+      c.drawImage(Art.cheer[ct.i][jump > 0 ? 1 : 0], ct.x - size / 2, y, size, size);
+    }
+    if (fx.cats.length && Math.random() < dt * 6) {
+      const ct = U.pick(fx.cats);
+      fx.parts.push({ kind: 'spark', x: ct.x + U.rand(-20, 20), y: h - 90, vx: U.rand(-30, 30), vy: U.rand(-140, -60), col: U.pick(['#ffd34d', '#ff8fb5']), t: 0, life: 0.8, r: 3 });
+    }
+    // 全屏金光闪
+    if (fx.flash > 0) {
+      c.globalAlpha = Math.min(0.7, fx.flash); c.fillStyle = '#fff6d8';
+      c.fillRect(0, 0, w, h); c.globalAlpha = 1;
+    }
+  }
+  // 金币头奖（≥80%）世界层迷你庆祝：庆祝层临时挂 body，播完自动收摊（指针穿透不挡操作）
+  function worldCelebrate() {
+    fxTok++; fxTimersClear(); // 新的一场：作废旧演出残留
+    chestFxMount(true);
+    const tok = fxTok;
+    chestFxStart(2);
+    fxLater(tok, 2400, () => { if (tok === fxTok) fxStopAll(); });
+  }
+  /* ---- 老虎机滚动：所有奖励行的窗口 canvas 共用一条 tick 链，逐个落定为真奖励 ---- */
+  let chestRolls = [];      // 当前宝箱的滚动行 {el,ctx,icon,tier,kind,done}
+  let chestShowLevel = 0;   // 本箱整体演出规格：0 普通 / 1 稀有 / 2 大奖
+  let chestUiWired = false; // 「跳过/收下」按钮的演出清理监听只补挂一次
+  let slotIconPool = null;  // 滚动时随机闪过的图标池（惰性构建）
+  function chestRollTick(tok) {
+    if (tok !== fxTok) return;
+    let rolling = false;
+    for (const r of chestRolls) if (!r.done) rolling = true;
+    if (!rolling) return;
+    if (!slotIconPool) slotIconPool = Object.keys(Art.icons).map(k => Art.icons[k]).concat([Art.items.coin, Art.items.gem3]);
+    const icv = U.pick(slotIconPool);
+    for (const r of chestRolls) {
+      if (r.done) continue;
+      r.ctx.clearRect(0, 0, 88, 88);
+      r.ctx.drawImage(icv, 0, 0, 88, 88); // 滚动就是滚着玩的：真实奖励数据早已结算
+    }
+    Sfx.sfx.slotTick();
+    fxLater(tok, 55, () => chestRollTick(tok));
+  }
+  // 单行落定：定格真奖励 + 弹跳亮起 + 定音「哐当」；稀有/大奖行另有金光与「叮！」
+  function chestSettleRow(tok, r) {
+    if (tok !== fxTok || r.done) return;
+    r.done = true;
+    $('chest-icon').classList.remove('suspense'); // 首行落定即解除悬念摇晃
+    r.ctx.clearRect(0, 0, 88, 88);
+    r.ctx.drawImage(r.icon, 0, 0, 88, 88);
+    r.el.classList.remove('rolling');
+    r.el.classList.add('landed');
+    if (r.tier >= 3) r.el.classList.add('big');
+    else if (r.tier === 2) r.el.classList.add('rare');
+    Sfx.sfx.slotStop();
+    if (r.tier >= 3) {
+      chestFx.flash = Math.max(chestFx.flash, 0.5);
+      Sfx.sfx.rareDing();
+      if (r.kind === 'evo') Sfx.sfx.evolve(); // 进化音效挪到进化行落定的瞬间，更带感
+    } else if (r.tier === 2) {
+      chestFx.flash = Math.max(chestFx.flash, 0.35);
+      Sfx.sfx.rareDing();
+    } else if (r.tier === 1) {
+      Sfx.sfx.dingDong();
+    }
+  }
+  // 演出收尾：按整体规格加码（大奖=彩纸横扫+金光+烟花+震屏+群猫欢呼+强 fanfare；稀有=金闪+琶音）
+  function chestFinishShow(tok) {
+    if (tok !== fxTok || G.state !== 'chest') return;
+    $('chest-icon').classList.remove('suspense');
+    $('chest-rays').classList.remove('rays-fast');
+    const btn = $('btn-chest-ok');
+    btn.textContent = '开心收下！';
+    btn.classList.remove('skip');
+    if (chestShowLevel >= 2) {
+      chestFxStart(2);
+      $('chest-rays').classList.add('rays-gold');
+      $('chest-title').classList.add('super');
+      $('chest-panel').classList.add('quake');
+      fxLater(tok, 620, () => $('chest-panel').classList.remove('quake'));
+      Sfx.sfx.fanfare(true);
+      Sfx.sfx.meowChoir();
+    } else if (chestShowLevel === 1) {
+      chestFxStart(1); // 金色闪光 + 星星粒子
+      Sfx.sfx.fanfare(false); // 喇叭琶音
+    }
+  }
+  // 提前收下（=跳过演出）：立刻定格所有行 + 收掉全部演出回调与画面。数据早已结算，绝不卡玩家
+  function chestSkipAll() {
+    fxStopAll();
+    $('chest-icon').classList.remove('suspense');
+    $('chest-rays').classList.remove('rays-fast', 'rays-gold');
+    $('chest-panel').classList.remove('quake');
+    $('chest-title').classList.remove('super');
+    for (const r of chestRolls) { // 没落定的行直接定格成真奖励（纯补画面）
+      if (!r.done) {
+        r.done = true;
+        r.ctx.clearRect(0, 0, 88, 88);
+        r.ctx.drawImage(r.icon, 0, 0, 88, 88);
+        r.el.classList.remove('rolling');
+        r.el.classList.add('landed');
+      }
+    }
+    chestRolls = [];
+    const btn = $('btn-chest-ok');
+    btn.textContent = '开心收下！';
+    btn.classList.remove('skip');
+  }
   function openChest(isMother) {
     G.state = 'chest';
     const P = G.player;
@@ -1901,19 +2180,20 @@
     Sfx.meow('chest');
     const box = $('chest-rewards');
     box.innerHTML = '';
-    let delay = 0;
     const applyLater = [];
     const lvlPreview = new Map();
     const stampPreview = new Map();
-    rewards.forEach((r, ri) => {
+    const rolls = []; // 老虎机滚动行（与奖励行一一对应）
+    rewards.forEach(r => {
       let name, desc, iconKey;
+      let tier = 0; // 该行的落定演出档：0 普通 / 1 小惊喜 / 2 稀有 / 3 大奖
       if (r.type === 'evo') {
         const def = WEAPONS[r.w.id];
         name = `✨ ${def.name} → ${evoName(r.w.id)} ✨`;
         desc = def.descEvo;
         iconKey = def.iconEvo;
+        tier = 3;
         applyLater.push(() => evolveWeapon(r.w));
-        delay = Math.max(delay, 500);
       } else if (r.type === 'w') {
         const def = WEAPONS[r.id];
         const from = lvlPreview.has(r.ref) ? lvlPreview.get(r.ref) : r.ref.lv;
@@ -1935,6 +2215,7 @@
         name = '🐾 ' + meta.name + ' ×' + (cur + 1);
         desc = stampEffectText(r.id, cur + 1);
         iconKey = meta.icon;
+        tier = 2; // 猫爪印 = 稀有档
         applyLater.push(() => {
           const af = P.affixes.find(a => a.id === r.id);
           if (af) af.stacks++;
@@ -1946,32 +2227,53 @@
         desc = '回复 ' + DATA.CFG.drops.milkHeal + ' 生命';
         iconKey = 'milkIcon';
         applyLater.push(() => { healPlayer(DATA.CFG.drops.milkHeal); heartAt(P.x, P.y - 30); });
-      } else { // 金币位：恰好 1 枚金币 → 按金币经验规则抽奖折算，行内直接显示结果
+      } else { // 金币位：恰好 1 枚金币 → 按金币经验规则抽奖折算，行内直接显示结果（落定演出与档位联动）
         const pct = rollLotteryTier();
         const v = Math.max(1, Math.round(DATA.xpNeed(P.lv || 1) * pct));
         name = '金币 ×1';
         desc = pct >= 0.10 ? `💥 抽中经验 ${Math.round(pct * 100)}% 大奖！（+${v}）`
                            : `抽奖 → 经验 +${Math.round(pct * 100)}%（+${v}）`;
         iconKey = null;
+        tier = pct >= 0.30 ? 3 : pct >= 0.10 ? 2 : pct >= 0.05 ? 1 : 0;
         applyLater.push(() => applyLottery(pct, P.x, P.y - 10));
       }
       const row = document.createElement('div');
-      row.className = 'reward';
-      row.style.animationDelay = (0.25 + ri * 0.35) + 's';
+      row.className = 'reward rolling'; // 先以滚动态出现（压暗），落定时弹跳亮起
       row.innerHTML = `<canvas width="88" height="88"></canvas><div><div class="rname">${name}</div><div class="rdesc">${desc}</div></div>`;
       const cc = row.querySelector('canvas').getContext('2d');
-      if (iconKey) cc.drawImage(Art.icons[iconKey] || Art.items.gem3, 0, 0, 88, 88);
-      else cc.drawImage(Art.items.coin, 0, 0, 88, 88);
+      const icon = iconKey ? (Art.icons[iconKey] || Art.items.gem3) : Art.items.coin;
+      cc.drawImage(icon, 0, 0, 88, 88); // 先定格真奖励：跳过/桩环境下行内容也完整
+      rolls.push({ el: row, ctx: cc, icon, tier, kind: r.type, done: false });
       box.appendChild(row);
     });
-    // 播放完动画再结算属性，避免提前变强（其实无所谓，统一立即应用）
+    // 数据立即结算（演出纯装饰不阻塞）：提前收下时数值早已到账
     for (const f of applyLater) f();
     const ci = $('chest-icon').getContext('2d');
     ci.clearRect(0, 0, 240, 240);
     ci.drawImage(Art.items.chestOpen, 18, 42, 204, 170);
     show(screens.chest, true);
+    // —— 演出会话开始：作废上一场残留，登记本场令牌 ——
+    fxTok++; fxTimersClear();
+    chestFxMount(false);
+    chestRolls = rolls;
+    const tok = fxTok;
+    const maxTier = rolls.reduce((m, r) => Math.max(m, r.tier), 0);
+    chestShowLevel = count >= 5 || maxTier >= 3 ? 2 : maxTier >= 2 ? 1 : 0; // 顶格 5 件 / 含大奖行 → 大奖规格
+    const superChest = chestShowLevel >= 2, shinyChest = chestShowLevel === 1 || count >= 3;
+    const title = $('chest-title');
+    title.textContent = superChest ? '🎉 超级金宝箱！' : shinyChest ? '✨ 闪闪金宝箱！' : '🎁 金宝箱！';
+    title.classList.toggle('super', superChest);
+    $('chest-icon').classList.add('suspense');   // 悬念：宝箱摇晃加速
+    $('chest-rays').classList.add('rays-fast');  // 光圈加速旋转
+    const btn = $('btn-chest-ok');
+    btn.textContent = '跳过 ⏭'; // 演出中=跳过（提前可点，点了立即收下）；AUTO 自动点击不受影响
+    btn.classList.add('skip');
+    if (!chestUiWired) { chestUiWired = true; btn.addEventListener('click', chestSkipAll); }
+    // 老虎机节奏：沿用逐行 0.35s 的落定韵律（首行 0.55s 略作悬念），共用一条滚动 tick 链
+    rolls.forEach((r, ri) => fxLater(tok, 550 + ri * 350, () => chestSettleRow(tok, r)));
+    fxLater(tok, 560 + rolls.length * 350, () => chestFinishShow(tok));
+    chestRollTick(tok);
     if (AUTO === 'play' || AUTO === 'boss') setTimeout(() => $('btn-chest-ok').click(), 1500);
-    if (rewards.some(r => r.type === 'evo')) { setTimeout(() => { Sfx.sfx.evolve(); Sfx.meow('happy'); }, 550); }
   }
   const EVO_NAMES = {
     sakura: '樱花爆爪', ultra: '超声波', fishstorm: '千鱼风暴', tunarain: '金枪鱼雨',
@@ -2236,7 +2538,7 @@
         const ch = getChunk(cx, cy);
         const sx = Math.floor(cx * CHUNK - ch.pad - G.cam.x);
         const sy = Math.floor(cy * CHUNK - ch.pad - G.cam.y);
-        ctx.drawImage(ch.canvas, sx, sy);
+        ctx.drawImage(ch.canvas, sx, sy, ch.canvas.width * PIX, ch.canvas.height * PIX);
         for (const l of ch.lamps) if (l.x > camL && l.x < camR && l.y > camT && l.y < camB) lamps.push(l);
       }
     }
@@ -2244,6 +2546,16 @@
     if (curMap) {
       curMap.drawDecor(ctx, camL, camT, camR, camB, w2sx, w2sy);
       curMap.drawFx(ctx, G.time, w2sx, w2sy, camL, camT, camR, camB, G.cam.x, G.cam.y);
+      // ?debug=1 碰撞可视化：BLOCK 格画红色半透明块，核对视觉障碍与实际碰撞一致（地图调试用）
+      if (/[?&]debug=1/.test(location.search)) {
+        ctx.fillStyle = 'rgba(255,32,64,.5)';
+        for (let gy = 0; gy < curMap.gh; gy++) for (let gx = 0; gx < curMap.gw; gx++) {
+          if (curMap.grid[gy * curMap.gw + gx] !== MAPS.T.BLOCK) continue;
+          const bx0 = gx * MAPS.CELL - G.cam.x, by0 = gy * MAPS.CELL - G.cam.y;
+          if (bx0 < -halfW - 90 || by0 < -halfH - 90 || bx0 > halfW + 90 || by0 > halfH + 90) continue;
+          ctx.fillRect(bx0, by0, MAPS.CELL, MAPS.CELL);
+        }
+      }
     }
     const P = G.player;
     // ---- 区域（猫砂）：数量越多整体越淡越简（LOD），地面不被淹没 ----
@@ -2467,7 +2779,7 @@
       const sx = w2sxA(d.x), sy = w2syA(d.y) + d.vy * d.t * zoom;
       const k = d.t / d.life;
       ctx.globalAlpha = 1 - k * k;
-      ctx.font = (d.crit ? '900 22px' : '700 15px') + ' "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+      ctx.font = (d.crit ? '900 22px' : '700 15px') + ' "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
       ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(30,20,40,.8)';
       ctx.strokeText(d.txt, sx, sy);
       ctx.fillStyle = d.col || (d.crit ? '#ffd34d' : '#fff');
@@ -2490,7 +2802,7 @@
     }
     ctx.restore();
     // ---- 夜幕 & 灯光 ----
-    ctx.fillStyle = 'rgba(18,16,52,0.30)';
+    ctx.fillStyle = 'rgba(18,16,52,0.32)';
     ctx.fillRect(0, 0, vw, vh);
     setWorldXf();
     ctx.save();
@@ -2561,7 +2873,7 @@
     const hurtSpr = Art.EH[e.type] ? Art.EH[e.type][0] : null;
     const sc = e.scale;
     const sx = w2sx(e.x), sy = w2sy(e.y);
-    const sprW = e.mother ? 240 : e.boss ? 160 : 64;
+    const sprW = e.mother ? 192 : e.boss ? 128 : 64;
     let yOff = 0, entryK = 0;
     if (e.boss && e.state === 'entry') { // 从天而降
       entryK = Math.max(0, e.entryT / (e.entryD || 0.9));
@@ -2621,7 +2933,7 @@
       ctx.translate(sx, sy - (e.mother ? 165 : 78 * sc));
       ctx.scale(k, k);
       ctx.fillStyle = '#ff6b81';
-      ctx.font = '900 ' + (e.mother ? 44 : 30) + 'px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+      ctx.font = '900 ' + (e.mother ? 44 : 30) + 'px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.lineWidth = 6; ctx.strokeStyle = '#fff';
       ctx.strokeText('!', 0, 0);
@@ -2657,7 +2969,7 @@
     ctx.translate(sx, sy);
     if (P.flip) ctx.scale(-1, 1);
     if (dead) {
-      ctx.drawImage(F.dead, -56, -66, 112, 112);
+      ctx.drawImage(F.dead, -48, -58, 96, 96);
     } else {
       const squash = P.moving ? 1 + Math.sin(P.walkT * 16) * 0.035 : 1;
       ctx.scale(2 - squash, squash);
@@ -2667,10 +2979,10 @@
       else if (P.blinkA > 0) spr = F.blink;
       else spr = F.idle[Math.sin(G.time * 2.2) > 0 ? 0 : 1];
       const bob = P.moving ? Math.abs(Math.sin(P.walkT * 9)) * 3.5 : Math.sin(G.time * 2.5) * 1.5;
-      ctx.drawImage(spr, -56, -68 - bob, 112, 112);
+      ctx.drawImage(spr, -48, -60 - bob, 96, 96);
       if (P.hurtT > 0) {
         ctx.globalAlpha = P.hurtT / 0.25;
-        ctx.drawImage(Art.playerWhite, -56, -68, 112, 112);
+        ctx.drawImage(Art.playerWhite, -48, -60, 96, 96);
       }
     }
     ctx.restore();
@@ -2709,7 +3021,7 @@
     if (G.gemCombo >= 5 && G.gemComboT > 0) {
       const pop = 1 + Math.max(0, G.gemComboT - 0.85) * 1.6;
       ctx.translate(vw - 48, 36); ctx.scale(pop, pop);
-      ctx.font = '700 15px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+      ctx.font = '700 15px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
       ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
       ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(20,14,40,.85)';
       ctx.strokeText('🐟 ×' + G.gemCombo, 0, 0);
@@ -2723,7 +3035,7 @@
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.arc(vw - 34, 30, 21, 0, TAU); ctx.fill(); ctx.stroke();
     ctx.fillStyle = '#fff';
-    ctx.font = '900 19px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+    ctx.font = '900 19px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('Lv' + (P.lv || 1), vw - 34, 31);
     ctx.restore();
@@ -2731,7 +3043,7 @@
     const inBossFight = G.bossWarn > 0 || (G.boss && !G.boss.dieDone);
     const tstr = U.fmtTime(G.time);
     ctx.save();
-    ctx.font = '900 34px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+    ctx.font = '900 34px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(20,14,40,.85)';
     ctx.strokeText(tstr, vw / 2, 40);
@@ -2741,7 +3053,7 @@
     ctx.restore();
     // 击杀 & 金币（图标 + 数字）
     ctx.save();
-    ctx.font = '700 18px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+    ctx.font = '700 18px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(20,14,40,.85)';
     ctx.strokeText('' + G.kills, vw - 66, 30);
@@ -2758,7 +3070,7 @@
     const batchTxt = G.batch >= R2.batchCount ? '轮Boss战！' : '批次 ' + (G.batch + 1) + '/' + R2.batchCount;
     const mapTxt = curMap ? ' · ' + curMap.meta.emoji + curMap.meta.name : ' · 无尽街区';
     ctx.textAlign = 'right';
-    ctx.font = '700 15px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+    ctx.font = '700 15px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
     ctx.strokeText('第 ' + G.round + ' 轮 · ' + batchTxt + mapTxt, vw - 66, 88);
     ctx.fillStyle = '#c9b8ff';
     ctx.fillText('第 ' + G.round + ' 轮 · ' + batchTxt + mapTxt, vw - 66, 88);
@@ -2775,7 +3087,7 @@
       ctx.fillStyle = 'rgba(20,12,34,.5)';
       Art.rr(ctx, 8, 26, Math.max(1, P.weapons.length) * 34 + 4, 30, 8); ctx.fill();
       ctx.fillStyle = '#ff8fb5';
-      ctx.font = '700 12px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+      ctx.font = '700 12px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
       ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
       ctx.fillText(P.stunT > 0 ? '眩晕!' : '无法攻击', 12, 41);
       ctx.restore();
@@ -2798,11 +3110,11 @@
     const hx = w2sxA(P.x), hy = w2syA(P.y) - 50;
     ctx.save();
     ctx.fillStyle = 'rgba(20,12,34,.55)';
-    Art.rr(ctx, hx - 25, hy, 50, 9, 4.5); ctx.fill();
+    ctx.fillRect(hx - 25, hy, 50, 9);
     const hpk = U.clamp(P.hp / P.maxHp, 0, 1);
     if (hpk > 0.02) {
       ctx.fillStyle = hpk < 0.3 ? '#ff6b81' : hpk < 0.6 ? '#ffd166' : '#8fd982';
-      Art.rr(ctx, hx - 23.5, hy + 1.5, Math.max(3, 47 * hpk), 6, 3); ctx.fill();
+      ctx.fillRect(hx - 24, hy + 1.5, Math.max(3, 48 * hpk), 6);
     }
     ctx.restore();
     // Boss 血条
@@ -2821,7 +3133,7 @@
         ctx.fillStyle = 'rgba(255,255,255,.25)';
         Art.rr(ctx, vw / 2 - bw / 2 + 2, 76, Math.max(6, hpw), 6, 3); ctx.fill();
       }
-      ctx.font = '700 15px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+      ctx.font = '700 15px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
       ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(20,12,34,.8)';
       const bossTitle = '👑 鼠王·铁须' + (b.affixes && b.affixes.length ? '【' + affixNames(b) + '】' : '');
@@ -2845,11 +3157,11 @@
       const k = Math.min(1, G.banner.t / 0.4);
       ctx.save();
       ctx.globalAlpha = k;
-      ctx.font = '900 24px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+      ctx.font = '900 24px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       const y = 122;
       const tw = ctx.measureText(G.banner.txt).width;
-      ctx.fillStyle = 'rgba(20,14,40,.55)';
+      ctx.fillStyle = 'rgba(20,14,40,.75)';
       Art.rr(ctx, vw / 2 - tw / 2 - 18, y - 22, tw + 36, 44, 22); ctx.fill();
       ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(20,14,40,.85)';
       ctx.strokeText(G.banner.txt, vw / 2, y);
@@ -2861,7 +3173,7 @@
     if (G.time < 18 && G.state === 'play') {
       ctx.save();
       ctx.globalAlpha = Math.min(1, 18 - G.time) * 0.8;
-      ctx.font = '600 15px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+      ctx.font = '600 15px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
       ctx.textAlign = 'center';
       ctx.fillStyle = '#cfd0ff';
       ctx.fillText(IS_TOUCH ? '按住屏幕拖动＝摇杆移动 · 武器全自动' : 'WASD / 方向键移动 · 武器全自动 · P 暂停 · M 静音', vw / 2, vh - 26);
@@ -2906,7 +3218,7 @@
     ctx.lineWidth = 1.6;
     Art.rr(ctx, x, y, 30, 30, 9); ctx.stroke();
     ctx.drawImage(Art.icons[meta.icon], x + 4, y + 4, 22, 22);
-    ctx.font = '900 10px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+    ctx.font = '900 10px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(20,14,40,.9)';
     ctx.strokeText('×' + af.stacks, x + 15, y + 25.5);
@@ -2917,9 +3229,8 @@
 
   /* ================= 键盘全局 ================= */
   function handleKey(code) {
-    if (code === 'KeyM') {
-      Sfx.setMuted(!Sfx.isMuted());
-      $('btn-mute').textContent = '音效：' + (Sfx.isMuted() ? '关' : '开');
+    if (code === 'KeyM') { // M 静音快捷键：与 ⚙ 抽屉顶部音效按钮共用同一真源（改完经 meow-toggles 广播刷新）
+      toggleMuted();
       return;
     }
     if (G.state === 'levelup' && ['Digit1', 'Digit2', 'Digit3'].includes(code)) {
@@ -3011,8 +3322,8 @@
     Sfx.ensure();
     resetRun();
     for (const k in screens) show(screens[k], false);
+    document.body.classList.remove('help-open'); // 玩法说明若开着，同步收回放开过的纵向触摸
     G.state = 'play';
-    show($('btn-zoom'), true); show($('btn-speed'), true); // 缩放/加速按钮进局显示
     Sfx.bgmStart(G.mapId); // 意见5：每张地图一首 BGM
     const mName = curMap ? curMap.meta.emoji + curMap.meta.name + ' · ' : '';
     banner('🌙 第 1 轮 · ' + mName + '夜巡开始！击溃 4 个批次头目，讨伐鼠王！', 3);
@@ -3028,7 +3339,7 @@
   function toMenu() {
     G.state = 'menu';
     Sfx.bgmStop();
-    show($('btn-zoom'), false); show($('btn-speed'), false); // 缩放/加速按钮只在局内有意义
+    document.body.classList.remove('help-open');
     for (const k in screens) show(screens[k], k === 'menu');
     updateBestLine();
   }
@@ -3038,12 +3349,17 @@
   }
 
   $('btn-start').addEventListener('click', startRun);
-  $('btn-zoom').addEventListener('click', () => { Sfx.ensure(); Sfx.sfx.click(); cycleZoom(1); });
-  $('btn-speed').addEventListener('click', () => { Sfx.ensure(); Sfx.sfx.click(); cycleSpeedButton(); });
-  // 按钮循环顺序 1X → 2X → 3X → 1X
-  function cycleSpeedButton() { setSpeed(SPD_LV[(SPD_LV.indexOf(gameSpeed) + 1) % SPD_LV.length]); }
-  $('btn-help').addEventListener('click', () => { Sfx.ensure(); Sfx.sfx.click(); show(screens.help, true); });
-  $('btn-help-close').addEventListener('click', () => { Sfx.sfx.click(); show(screens.help, false); });
+  // 玩法说明：打开时给 body 挂 help-open 放开纵向触摸（面板内部滚动需要），关闭/开局收回
+  $('btn-help').addEventListener('click', () => {
+    Sfx.ensure(); Sfx.sfx.click();
+    show(screens.help, true);
+    document.body.classList.add('help-open');
+  });
+  $('btn-help-close').addEventListener('click', () => {
+    Sfx.sfx.click();
+    show(screens.help, false);
+    document.body.classList.remove('help-open');
+  });
   $('btn-resume').addEventListener('click', () => { Sfx.sfx.click(); resumeGame(); });
   $('btn-restart').addEventListener('click', () => { Sfx.sfx.click(); startRun(); });
   $('btn-quit').addEventListener('click', () => {
@@ -3056,10 +3372,8 @@
     }
     toMenu();
   });
-  $('btn-mute').addEventListener('click', () => {
-    Sfx.setMuted(!Sfx.isMuted());
-    $('btn-mute').textContent = '音效：' + (Sfx.isMuted() ? '关' : '开');
-  });
+  // 暂停面板「⚙ 平衡设置」保留纯配置功能；音效/缩放/加速三钮已回到暂停面板（#cfg-*-btn，
+  // 接线见下方对外接口区），id 未变、接线不复位
   $('btn-chest-ok').addEventListener('click', () => {
     Sfx.sfx.click();
     show(screens.chest, false);
@@ -3093,9 +3407,21 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden && G.state === 'play') pauseGame(); });
 
   /* ================= 主循环 ================= */
+  // 意见5（第五版）：对局相关状态（play/升级三选一/开宝箱/暂停/倒地）隐藏右上角 ⚙ 入口
+  // （改走暂停面板的「⚙ 平衡设置」），主菜单/结算/玩法说明/更新日志等非对局界面保持可见。
+  // 状态切换点较散，就收口在帧循环里做脏检查：只在变化的那一刻写一次 DOM，不每帧碰
+  const GEAR_HIDE_STATES = ['play', 'levelup', 'chest', 'pause', 'dying'];
+  let gearHidden = false; // 与 HTML 初始可见一致，首帧免写
+  function syncGearBtn() {
+    const hide = GEAR_HIDE_STATES.includes(G.state);
+    if (hide === gearHidden) return;
+    gearHidden = hide;
+    $('btn-cfg').hidden = hide;
+  }
   let lastT = performance.now();
   function loop(t) {
     requestAnimationFrame(loop);
+    syncGearBtn(); // ⚙ 齿轮可见性随对局状态切换（脏检查）
     // 视口自愈：旋转/地址栏收展/分屏拖动在某些浏览器不发 resize 事件，每帧廉价比对一次
     if (window.innerWidth !== vw || window.innerHeight !== vh) resize();
     const realDt = Math.min(0.05, (t - lastT) / 1000);
@@ -3158,8 +3484,9 @@
     for (const s of stars) {
       const a = 0.35 + Math.sin(G.realTime * s.sp + s.ph) * 0.3;
       ctx.globalAlpha = Math.max(0.05, a);
+      const fsz = Math.max(2, Math.round(s.r));
       ctx.fillStyle = '#fff';
-      ctx.beginPath(); ctx.arc(s.x * vw, s.y * vh, s.r, 0, TAU); ctx.fill();
+      ctx.fillRect(s.x * vw - fsz / 2, s.y * vh - fsz / 2, fsz, fsz);
     }
     ctx.restore();
     // 月亮
@@ -3190,6 +3517,7 @@
     ctx.drawImage(vignette, 0, 0);
     // 主视觉猫（摆尾 / 挥爪 / 眨眼）
     const mc = $('menu-art').getContext('2d');
+    mc.imageSmoothingEnabled = false;
     mc.clearRect(0, 0, 640, 560);
     const blink = (G.realTime % 4.6) < 0.14;
     const frame = Math.floor(G.realTime * 1.6) % 2;
@@ -3198,11 +3526,21 @@
   }
 
   updateBestLine();
-  updateToggleBtns();
+  // 🔊/🔍/⏩ 对外接口：暂停面板三钮（config_panel.js 负责发起循环与刷新文字）用它们循环档位、读取当前值；
+  // 值变化由 setZoom/setSpeed/toggleMuted → updateToggleBtns 以 meow-toggles 事件广播
+  window.MeowView = {
+    cycleZoom: dir => cycleZoom(dir || 1),
+    cycleSpeed: () => cycleSpeed(),
+    get: () => ({ zoom: userZoom, speed: gameSpeed, muted: Sfx.isMuted() })
+  };
   // ⚙ 平衡设置面板
   CfgPanel.init({
     onClose: () => { if (G.state === 'pause') show(screens.pause, true); }
   });
+  updateToggleBtns(); // 事件监听就位后，广播一次当前音效/缩放/加速状态
+  // 暂停面板三钮一行的音效钮接线（原 #btn-mute 逻辑，id 沿用 #cfg-mute-btn）；
+  // 单击切换 → meow-toggles 广播 → config_panel.js 刷新按钮文字，真源仍在 toggleMuted
+  $('cfg-mute-btn').addEventListener('click', () => { Sfx.sfx.click(); toggleMuted(); });
   const openCfg = () => {
     Sfx.ensure(); Sfx.sfx.click();
     if (G.state === 'play') pauseGame();
@@ -3249,12 +3587,15 @@
       } else if (AUTO === 'over') {
         setTimeout(() => { G.kills = 233; G.gold = 88; gameOver(); }, 700);
       } else if (AUTO === 'cfg') {
-        setTimeout(() => { $('btn-cfg').click(); }, 800);
+        // 意见5：对局中 ⚙ 齿轮已隐藏，直接走 openCfg（与旧「点击 #btn-cfg」等价：同样先暂停再开抽屉）
+        setTimeout(() => { openCfg(); }, 800);
       } else if (AUTO === 'cfgpreset') {
-        setTimeout(() => { $('btn-cfg').click(); setTimeout(() => {
+        setTimeout(() => { openCfg(); setTimeout(() => {
           const b = document.querySelector('#cfg-presets button[data-preset="easy"]');
           if (b) b.click();
         }, 400); }, 800);
+      } else if (AUTO === 'pause') { // 暂停面板截图/自动化（音效/缩放/加速三钮与「继续夜巡」同级的验证入口）
+        setTimeout(() => { pauseGame(); }, 800);
       } else if (AUTO === 'lvl') {
         setTimeout(() => { addXp(60); }, 900);
       } else if (AUTO === 'chest') {
@@ -3299,5 +3640,7 @@
       }
     }, 400);
   }
-  requestAnimationFrame(loop);
+  const startLoop = () => requestAnimationFrame(loop);
+  if (window.__PIXEL_GATE) window.__PIXEL_GATE.then(startLoop);
+  else startLoop();
 })();
