@@ -6,6 +6,11 @@
 
 https://gavin1920.github.io/miaomiao-game/
 
+## 美术
+
+「奶油团子」像素风重制(规范:lab/pixel-remake/STYLE.md,VI 手册:docs/VI手册.html)。
+像素素材加载失败时自动回退原版矢量画面,不影响游玩。
+
 ## License
 
 代码以 MIT 协议开源(见 [LICENSE](LICENSE))。
