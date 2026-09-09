@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<!-- 发布素材生成器：《喵都幸存者》小游戏图标
+     打开本页即可在画布上渲染 512/144 两档图标；配合自动化脚本 toDataURL 导出 PNG。
+     设计元素取自游戏主视觉：夜色喵都 + 大橘猫脸 + 粉色项圈金铃铛。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>meow icon generator</title>
+<style>body{margin:0;background:#222}canvas{display:block;margin:8px}</style>
+</head>
+<body>
+<canvas id="c512" width="512" height="512"></canvas>
+<canvas id="c144" width="144" height="144"></canvas>
+<script>
+'use strict';
+/* 大小无关的图标绘制：在 size×size 画布上按比例作画 */
+function drawIcon(cv) {
+  const S = cv.width, x = cv.getContext('2d');
+  const u = S / 512; // 统一比例单位
+  x.imageSmoothingEnabled = true;
+
+  /* ---- 夜色背景（上深下紫的游戏夜空） ---- */
+  const bg = x.createLinearGradient(0, 0, 0, S);
+  bg.addColorStop(0, '#12142e');
+  bg.addColorStop(0.62, '#2c2554');
+  bg.addColorStop(1, '#4d2f5c');
+  x.fillStyle = bg;
+  x.fillRect(0, 0, S, S);
+
+  /* ---- 星星 ---- */
+  const stars = [[52,58,5],[118,34,4],[210,72,3.4],[330,40,5],[452,74,4],[60,150,3.4],[470,170,3.4],[392,116,3],[86,238,3],[430,262,3.2]];
+  x.fillStyle = '#fff';
+  for (const [sx, sy, sr] of stars) {
+    x.globalAlpha = 0.85;
+    x.beginPath(); x.arc(sx * u, sy * u, sr * u, 0, Math.PI * 2); x.fill();
+  }
+  x.globalAlpha = 1;
+
+  /* ---- 月亮（右上，呼应游戏主视觉） ---- */
+  x.fillStyle = '#f2ecc9';
+  x.beginPath(); x.arc(436 * u, 96 * u, 62 * u, 0, Math.PI * 2); x.fill();
+  x.fillStyle = 'rgba(210,200,160,.5)';
+  x.beginPath(); x.arc(418 * u, 82 * u, 11 * u, 0, Math.PI * 2); x.fill();
+  x.beginPath(); x.arc(452 * u, 112 * u, 8 * u, 0, Math.PI * 2); x.fill();
+
+  /* ---- 城市剪影（底部） ---- */
+  x.fillStyle = '#1b1c38';
+  const bl = [[0,392,54],[54,368,40],[94,404,34],[128,352,52],[180,396,30],[210,376,44],[254,410,28],[282,356,48],[330,400,34],[364,372,42],[406,408,30],[436,364,46],[482,398,30]];
+  for (const [bx, by, bw] of bl) x.fillRect(bx * u, by * u, bw * u, (S - by) * u);
+  x.fillStyle = 'rgba(255,214,130,.85)';
+  const win = [[12,410],[30,426],[66,386],[84,412],[140,372],[158,398],[170,378],[224,392],[240,410],[294,374],[312,398],[376,390],[394,408],[448,382],[466,404]];
+  for (const [wx, wy] of win) x.fillRect(wx * u, wy * u, 8 * u, 10 * u);
+
+  /* ---- 大橘猫脸 ---- */
+  const cx = 256 * u, cy = 296 * u;
+  // 耳朵
+  x.fillStyle = '#f5a742';
+  for (const dir of [-1, 1]) {
+    x.beginPath();
+    x.moveTo(cx + dir * 34 * u, cy - 118 * u);
+    x.lineTo(cx + dir * 118 * u, cy - 176 * u);
+    x.lineTo(cx + dir * 122 * u, cy - 66 * u);
+    x.closePath(); x.fill();
+  }
+  x.fillStyle = '#ff9db0';
+  for (const dir of [-1, 1]) {
+    x.beginPath();
+    x.moveTo(cx + dir * 56 * u, cy - 118 * u);
+    x.lineTo(cx + dir * 104 * u, cy - 154 * u);
+    x.lineTo(cx + dir * 106 * u, cy - 92 * u);
+    x.closePath(); x.fill();
+  }
+  // 头
+  x.fillStyle = '#f5a742';
+  x.beginPath(); x.ellipse(cx, cy, 158 * u, 140 * u, 0, 0, Math.PI * 2); x.fill();
+  // 额头条纹
+  x.strokeStyle = '#d98a2b'; x.lineWidth = 13 * u; x.lineCap = 'round';
+  for (const [tx, tw] of [[-34, 0], [0, 0], [34, 0]]) {
+    x.beginPath();
+    x.moveTo(cx + tx * u, cy - 128 * u);
+    x.lineTo(cx + tx * u, cy - 96 * u);
+    x.stroke();
+  }
+  // 脸侧条纹
+  for (const dir of [-1, 1]) {
+    x.beginPath();
+    x.moveTo(cx + dir * 148 * u, cy - 34 * u);
+    x.lineTo(cx + dir * 118 * u, cy - 26 * u);
+    x.stroke();
+    x.beginPath();
+    x.moveTo(cx + dir * 150 * u, cy - 2 * u);
+    x.lineTo(cx + dir * 120 * u, cy + 2 * u);
+    x.stroke();
+  }
+  // 口鼻区（奶油色下半脸）
+  x.fillStyle = '#ffedcd';
+  x.beginPath(); x.ellipse(cx, cy + 62 * u, 104 * u, 76 * u, 0, 0, Math.PI * 2); x.fill();
+  // 眼睛（大而亮）
+  for (const dir of [-1, 1]) {
+    x.fillStyle = '#2b2036';
+    x.beginPath(); x.ellipse(cx + dir * 66 * u, cy - 16 * u, 26 * u, 32 * u, 0, 0, Math.PI * 2); x.fill();
+    x.fillStyle = '#fff';
+    x.beginPath(); x.arc(cx + dir * 58 * u, cy - 28 * u, 9 * u, 0, Math.PI * 2); x.fill();
+    x.beginPath(); x.arc(cx + dir * 74 * u, cy - 4 * u, 4.5 * u, 0, Math.PI * 2); x.fill();
+  }
+  // 腮红
+  x.fillStyle = 'rgba(255,141,166,.55)';
+  for (const dir of [-1, 1]) {
+    x.beginPath(); x.ellipse(cx + dir * 112 * u, cy + 34 * u, 24 * u, 15 * u, 0, 0, Math.PI * 2); x.fill();
+  }
+  // 鼻子 + w 嘴
+  x.fillStyle = '#ff8fa8';
+  x.beginPath();
+  x.moveTo(cx - 13 * u, cy + 40 * u); x.lineTo(cx + 13 * u, cy + 40 * u); x.lineTo(cx, cy + 56 * u);
+  x.closePath(); x.fill();
+  x.strokeStyle = '#7a4a28'; x.lineWidth = 7 * u; x.lineCap = 'round';
+  x.beginPath();
+  x.moveTo(cx, cy + 56 * u);
+  x.quadraticCurveTo(cx - 8 * u, cy + 74 * u, cx - 26 * u, cy + 68 * u);
+  x.moveTo(cx, cy + 56 * u);
+  x.quadraticCurveTo(cx + 8 * u, cy + 74 * u, cx + 26 * u, cy + 68 * u);
+  x.stroke();
+  // 胡须
+  x.strokeStyle = 'rgba(255,255,255,.92)'; x.lineWidth = 5.5 * u;
+  for (const dir of [-1, 1]) {
+    for (const [dy, len] of [[46, 96], [70, 88], [94, 76]]) {
+      x.beginPath();
+      x.moveTo(cx + dir * 96 * u, cy + dy * u - 20 * u);
+      x.lineTo(cx + dir * (96 + len) * u, cy + dy * u - 26 * u);
+      x.stroke();
+    }
+  }
+  // 项圈 + 金铃铛（游戏主角同款）
+  x.fillStyle = '#ff7d9e';
+  x.beginPath(); x.ellipse(cx, cy + 138 * u, 84 * u, 20 * u, 0, 0, Math.PI); x.fill();
+  x.fillStyle = '#ffd34d';
+  x.beginPath(); x.arc(cx, cy + 156 * u, 26 * u, 0, Math.PI * 2); x.fill();
+  x.strokeStyle = '#d9a12e'; x.lineWidth = 4 * u;
+  x.beginPath(); x.arc(cx, cy + 156 * u, 26 * u, 0, Math.PI * 2); x.stroke();
+  x.beginPath();
+  x.moveTo(cx, cy + 142 * u); x.lineTo(cx, cy + 152 * u);
+  x.moveTo(cx - 9 * u, cy + 152 * u); x.lineTo(cx + 9 * u, cy + 152 * u);
+  x.stroke();
+  x.fillStyle = '#8a5a1a';
+  x.beginPath(); x.arc(cx, cy + 163 * u, 4 * u, 0, Math.PI * 2); x.fill();
+}
+
+drawIcon(document.getElementById('c512'));
+drawIcon(document.getElementById('c144'));
+window.__icons = {
+  512: document.getElementById('c512').toDataURL('image/png'),
+  144: document.getElementById('c144').toDataURL('image/png')
+};
+</script>
+</body>
+</html>

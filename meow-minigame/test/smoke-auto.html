@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<!-- 自动冒烟页：不接管 rAF，游戏自然运行；4 秒后把诊断写进 document.title
+     供 chrome --headless --dump-dom 读取。?wx=1 走真实小游戏分支仿真。 -->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>SMOKE-WAIT</title>
+<style>html,body{margin:0;background:#141430;overflow:hidden}#game{display:block;width:100vw;height:100vh}</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="smoke-report" style="position:fixed;left:4px;bottom:4px;color:#0f0;font:12px monospace;background:#000;padding:2px">report-waiting</div>
+<script src="wx-stub.js?v=auto2"></script>
+<script>
+  setTimeout(() => {
+    try {
+      const errs = window.__errs || [];
+      document.getElementById('smoke-report').textContent =
+        'SMOKE|pixel=' + (document.documentElement.dataset.pixelMode || 'none') +
+        '|errs=' + errs.length +
+        '|first=' + String(errs[0] || '').slice(0, 90).replace(/\|/g, '/') +
+        '|state=' + (window.__MS ? window.__MS.G.state : 'NA');
+    } catch (e) { document.getElementById('smoke-report').textContent = 'SMOKE-ERR ' + e.message; }
+  }, 4000);
+</script>
+<script src="../bundle.js?v=auto2"></script>
+</body>
+</html>

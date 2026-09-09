@@ -1,29 +1,63 @@
-/* 喵都幸存者 · 平台适配层（微信小游戏 → 浏览器 DOM/BOM 语义）
+/* 喵都幸存者 · 平台适配层 v3.1（微信小游戏 → 浏览器 DOM/BOM 语义）
    ─────────────────────────────────────────────────────────
    H5 本体只依赖这些浏览器能力，逐项桥接：
-   · document.createElement('canvas') → wx.createCanvas()（首次即屏幕画布）
-   · window / innerWidth / devicePixelRatio / location / navigator → wx.getSystemInfoSync
+   · document.createElement('canvas') → wx.createCanvas()（首次即屏幕画布，全部关平滑=像素风）
+   · window/innerWidth/devicePixelRatio/location/navigator → 「虚拟视口」：
+     纵向恒为 720（设计基准短边），横向按真机长宽比折算——游戏在熟悉的 720p
+     坐标系里作画，适配层把这块虚拟画布等比贴到物理屏（docs/手机端UI规格方案.md v3）。
+     视口对象可变：jsbridge 晚就绪/真机信息变化时原位重算，游戏逐帧自愈检查自动跟进。
    · AudioContext → wx.createWebAudioContext（缺声道的旧基础库自动静音兜底）
    · localStorage → wx.setStorageSync / getStorageSync
-   · fetch（猫叫采样读取）→ FileSystemManager.readFile（读代码包内 assets/meow）
-   · canvas.addEventListener('touch*') → wx.onTouchStart/Move/End/Cancel
-   · requestAnimationFrame / performance → 原生自带，缺失时兜底
+   · fetch（猫叫采样/像素清单）→ FileSystemManager.readFile（读代码包内文件）
+   · Image → wx.createImage（像素精灵加载）
+   · CustomEvent/dispatchEvent → 像素素材就绪事件（__PIXEL_GATE 启动门）
+   · wx.loadFont → 内置 Fusion Pixel 像素字体子集
+   · canvas.addEventListener('touch*') → wx.onTouchStart/Move/End/Cancel（坐标映射到虚拟视口）
    在浏览器里跑测试时：真实 DOM 都在，本文件只补一层 wx→canvas 的触摸桥，
-   所有 wx.* 调用由 test/wx-stub.js 提供。 */
+   所有 wx.* 调用由 test/wx-stub.js 提供（?wx=1 可强制走真实分支）。
+*/
 'use strict';
 (() => {
   const IN_WX = typeof wx !== 'undefined' && typeof wx.createCanvas === 'function';
   const g = typeof GameGlobal !== 'undefined' ? GameGlobal : globalThis;
+  /* 全局挂载防弹化：部分宿主把 window/document 等定义为只读 getter，直接赋值会 TypeError
+     （开发者工具实测踩雷）。先普通赋值，失败再 defineProperty；彻底锁死时返回 false，
+     由调用方的兜底逻辑处理。 */
+  const defGlobal = (key, value) => {
+    try {
+      g[key] = value;
+      if (g[key] === value) return true;
+    } catch (e) { /* 只读 getter，走 defineProperty */ }
+    try {
+      Object.defineProperty(g, key, { value, configurable: true, writable: true });
+      return true;
+    } catch (e) { return false; }
+  };
 
-  /* ---------- 画布：注册表式 addEventListener + 统一分发 ---------- */
+  /* ---------- 画布：注册表式 addEventListener + 统一分发 + 强制像素采样 ---------- */
   function patchCanvas(c) {
     if (!c || c.__patched) return c;
     const ls = {};
+    /* 事件注册表必须保证成功（触摸桥无条件调 _dispatch，失败=输入全失效），单独前置 */
     c.__patched = true;
     c._dispatch = (t, e) => { for (const f of ls[t] || []) f(e); };
     c.addEventListener = (t, f) => { (ls[t] = ls[t] || []).push(f); };
     c.removeEventListener = (t, f) => { ls[t] = (ls[t] || []).filter(x => x !== f); };
-    if (!c.style) c.style = {};
+    try { if (!c.style) c.style = {}; } catch (e) { /* 只读 style 宿主：跳过 */ }
+    /* 像素风关键：所有上下文默认关平滑（地形 1/4 烘焙 ×4 放大、像素精灵放大全靠它）。
+       游戏代码此后仍可自行改写该属性；路径抗锯齿不受此开关影响。
+       注意：个别宿主的 canvas 方法不可覆写——getContext 覆写单独 try/catch，
+       失败就保留原 getContext（游戏自身在 init/resize 里也会设 imageSmoothingEnabled=false）。 */
+    try {
+      const origGet = c.getContext;
+      if (typeof origGet === 'function' && !c.__ctxPatched) {
+        c.getContext = function (...a) {
+          const x = origGet.apply(this, a);
+          try { if (x && 'imageSmoothingEnabled' in x) x.imageSmoothingEnabled = false; } catch (e) { /* noop */ }
+          return x;
+        };
+      }
+    } catch (e) { /* 保底：保留原 getContext */ }
     return c;
   }
 
@@ -34,13 +68,45 @@
     return screenCanvas;
   }
 
-  /* ---------- 系统信息 ---------- */
-  let sys = { windowWidth: 1280, windowHeight: 720, pixelRatio: 2 };
-  if (IN_WX && wx.getSystemInfoSync) {
-    try { sys = wx.getSystemInfoSync(); } catch (e) { /* 保底默认值 */ }
-  } else if (typeof window !== 'undefined') {
-    sys = { windowWidth: window.innerWidth, windowHeight: window.innerHeight, pixelRatio: window.devicePixelRatio || 1 };
+  /* ---------- 物理视口（真实值）+ 虚拟视口（v3） ----------
+     虚拟视口 = 可变对象：jsbridge 晚就绪/系统信息晚到时重算，getter 与游戏逐帧自愈
+     检查都引用同一对象，自动收敛。 */
+  const real = { w: 0, h: 0, dpr: 0 };
+  const view = { vw: 1280, vh: 720, dpr: 2, kx: 1, ky: 1 };
+  const VH = 720; // 虚拟纵向恒 720（=设计基准短边；横屏锁定前提，改竖屏需重新推导）
+
+  function readSys() {
+    try {
+      if (IN_WX && wx.getWindowInfo) { const s = wx.getWindowInfo(); if (s && s.windowWidth) { real.w = s.windowWidth; real.h = s.windowHeight; real.dpr = s.pixelRatio || 2; return true; } }
+      if (IN_WX && wx.getSystemInfoSync) { const s = wx.getSystemInfoSync(); if (s && s.windowWidth) { real.w = s.windowWidth; real.h = s.windowHeight; real.dpr = s.pixelRatio || 2; return true; } }
+      if (!IN_WX && typeof window !== 'undefined') { real.w = window.innerWidth; real.h = window.innerHeight; real.dpr = window.devicePixelRatio || 1; return true; }
+    } catch (e) { /* 下次重试 */ }
+    return false;
   }
+
+  function computeVirtual() {
+    if (!readSys()) return false;
+    real.w = Math.max(1, real.w); real.h = Math.max(1, real.h);
+    view.vh = VH;
+    view.vw = Math.round(VH * (real.w / real.h));
+    view.dpr = (real.w * Math.min(2, real.dpr || 2)) / view.vw;
+    view.kx = view.vw / real.w;
+    view.ky = view.vh / real.h;
+    return true;
+  }
+  computeVirtual();
+  /* sys 晚就绪重试：启动极早期 jsbridge 可能未就绪（实测 2-3 条 getSystemInfo fail 报错），
+     每 500ms 重读一次，成功即重算虚拟视口并原位更新（getter/触摸映射全部自动跟进） */
+  let sysTries = 0;
+  const sysTimer = setInterval(() => {
+    sysTries++;
+    if (readSys()) {
+      computeVirtual();
+      clearInterval(sysTimer);
+    } else if (sysTries >= 40) {
+      clearInterval(sysTimer);
+    }
+  }, 500);
 
   /* ---------- 小游戏环境：补齐 window / document ---------- */
   if (IN_WX) {
@@ -51,22 +117,38 @@
     };
     const dummy = () => ({ style: {}, classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
       appendChild() {}, addEventListener() {}, setAttribute() {} });
-    g.document = {
-      createElement(tag) { return tag === 'canvas' ? patchCanvas(wx.createCanvas()) : dummy(); },
+    defGlobal('document', {
+      __meowDoc: true,
+      createElement(tag) {
+        const fn = tag === 'canvas' ? () => patchCanvas(wx.createCanvas()) : dummy;
+        fn.__stub = true;
+        return fn();
+      },
       getElementById() { return null; },
       addEventListener() {},
+      documentElement: { classList: { add() {}, remove() {}, toggle() {}, contains: () => false }, dataset: {} },
       body: Object.assign(dummy(), { classList: { add() {}, remove() {} } }),
       hidden: false,
-      fonts: null
-    };
+      fonts: null,
+      title: ''
+    });
+    /* window 桩：视口三件套全部虚拟值（getter 引用 view，重算自动生效）；
+       事件派发真实现（像素素材就绪事件靠它） */
+    const winListeners = {};
     const win = {
-      innerWidth: sys.windowWidth,
-      innerHeight: sys.windowHeight,
-      devicePixelRatio: sys.pixelRatio || 2,
+      __meowStub: true,
+      get innerWidth() { return view.vw; },
+      get innerHeight() { return view.vh; },
+      get devicePixelRatio() { return view.dpr; },
       navigator: { userAgent: 'wechat-minigame' },
       location: { search: '', href: 'game://minigame' },
       ontouchstart: null, // 让 H5 的 'ontouchstart' in window 判定为触屏
-      addEventListener() {}, removeEventListener() {},
+      addEventListener(t, f) { (winListeners[t] = winListeners[t] || []).push(f); },
+      removeEventListener(t, f) { winListeners[t] = (winListeners[t] || []).filter(x => x !== f); },
+      dispatchEvent(ev) {
+        try { (winListeners[ev.type] || []).slice().forEach(f => f(ev)); } catch (e) { /* 单个监听失败不影响其他 */ }
+        return true;
+      },
       setTimeout, clearTimeout, setInterval, clearInterval
     };
     if (wx.createWebAudioContext) {
@@ -74,40 +156,120 @@
       win.AudioContext = function () { return wx.createWebAudioContext(); };
     }
     // 本体全部走 window.* / 裸全局，统一挂到 GameGlobal
-    g.localStorage = storageShim;
-    g.window = win;
-    g.navigator = win.navigator;
-    g.location = win.location;
+    defGlobal('localStorage', storageShim);
+    defGlobal('window', win);
+    defGlobal('navigator', win.navigator);
+    /* location 绝不能普通赋值：浏览器宿主上 g.location = obj 等于发起页面导航
+       （实测：页面被导航到 "[object Object]"）。只走 defineProperty，失败就保留宿主原生
+       location（游戏仅读 search/href，真实浏览器下本来就好用）。 */
+    try {
+      Object.defineProperty(g, 'location', { value: win.location, configurable: true, writable: true });
+    } catch (e) { /* 保留宿主 location */ }
+    /* window 桩装不上（开发者工具把 window 锁成真实页面 window）时，
+       把真实 window 的视口三件套重定义为 getter（指向 view，重算自动生效）——
+       否则游戏会读到整个页面的 innerWidth，画布被等比放大后 1:1 裁切（实测踩雷）。 */
+    if (!(window && window.__meowStub)) {
+      const pin = t => {
+        try {
+          Object.defineProperty(t, 'innerWidth', { get: () => view.vw, configurable: true });
+          Object.defineProperty(t, 'innerHeight', { get: () => view.vh, configurable: true });
+          Object.defineProperty(t, 'devicePixelRatio', { get: () => view.dpr, configurable: true });
+        } catch (e) { /* 锁死则放弃 */ }
+      };
+      try { pin(g.window); } catch (e) {}
+      try { if (typeof window !== 'undefined') pin(window); } catch (e) {}
+    }
     if (typeof performance === 'undefined' || !performance.now) {
-      g.performance = { now: () => Date.now() };
+      defGlobal('performance', { now: () => Date.now() });
     }
     if (typeof requestAnimationFrame === 'undefined') {
-      g.requestAnimationFrame = f => setTimeout(() => f(performance.now()), 16);
+      defGlobal('requestAnimationFrame', f => setTimeout(() => f(performance.now()), 16));
     }
-    // 猫叫采样：fetch 语义 → 读代码包内文件（读不到时 audio.js 自动回退合成喵叫）
+    /* Event/CustomEvent 桩：仅在宿主没有原生实现时才装（覆盖原生会让 art_pixel 的
+       window.dispatchEvent(new CustomEvent(...)) 抛 TypeError，像素管线被误判失败回退） */
+    if (typeof Event === 'undefined') defGlobal('Event', function (type) { this.type = type; });
+    if (typeof CustomEvent === 'undefined') {
+      defGlobal('CustomEvent', function (type, opts) { this.type = type; this.detail = opts && opts.detail; });
+    }
+    /* 安全 title 写入器：art_pixel（复制品经 sync 脱敏后）经此写 document.title——
+       锁死宿主（开发者工具嵌入式页面 title 只读）上静默忽略，不再炸像素管线 */
+    defGlobal('__setDocTitle', v => { try { document.title = String(v); } catch (e) { /* 只读宿主忽略 */ } });
+    /* 像素素材就绪门：fork 版 main.js 保留与 H5 一致的 __PIXEL_GATE 启动门；
+       5s 兜底防素材异常卡启动（art_pixel 失败路径也会派发就绪事件）。
+       gate 同时挂 win 与 GameGlobal：真机 window===win，开发者工具 window 被锁则走 pin 路径。
+       __PIXEL_GATE_RESOLVE 供 art_pixel 复制品（sync 脱敏）直接 resolve，绕开事件系统差异。 */
+    const pixelGate = new Promise(res => {
+      try { win.addEventListener('pixel-assets-ready', () => res()); } catch (e) {}
+      defGlobal('__PIXEL_GATE_RESOLVE', () => res());
+      setTimeout(res, 5000);
+    });
+    win.__PIXEL_GATE = pixelGate;
+    defGlobal('__PIXEL_GATE', pixelGate);
+    /* 像素字体：内置 Fusion Pixel 子集。wx.loadFont 注册后返回字体家族名——
+       tools_font.py 已把子集字体的家族名统一改写为 "Fusion Pixel"，与游戏内
+       所有 '"Fusion Pixel",...' 字体栈精确命中（勿单独改动家族名，改请同步 tools_font.py） */
+    try {
+      if (wx.loadFont) wx.loadFont('assets/fonts/meow-pixel.ttf');
+    } catch (e) { /* 字体失败回退系统字体 */ }
+    /* 微信胶囊按钮（物理pt）→ 虚拟坐标，供 HUD 避让（随视口重算自动更新） */
+    try {
+      if (wx.getMenuButtonBoundingClientRect) {
+        const c = wx.getMenuButtonBoundingClientRect();
+        if (c && c.width) {
+          defGlobal('__CAPSULE', {
+            get left() { return c.left * view.kx; },
+            get right() { return c.right * view.kx; },
+            get top() { return c.top * view.ky; },
+            get bottom() { return c.bottom * view.ky; },
+            get width() { return c.width * view.kx; },
+            get height() { return c.height * view.ky; }
+          });
+        }
+      }
+    } catch (e) { /* noop */ }
+    /* 猫叫采样 fetch（ArrayBuffer）+ 像素清单 fetch（json）→ 读代码包内文件 */
+    const utf8 = buf => {
+      try { return new TextDecoder('utf-8').decode(buf); } catch (e) { /* 手动解码兜底 */ }
+      const a = new Uint8Array(buf);
+      let s = '';
+      for (let i = 0; i < a.length; i++) s += String.fromCharCode(a[i]);
+      try { return decodeURIComponent(escape(s)); } catch (e) { return s; }
+    };
     if (typeof fetch !== 'function' && wx.getFileSystemManager) {
       g.fetch = url => new Promise(resolve => {
         const p = String(url).replace(/^https?:\/\/[^/]+\//, '');
         const fsm = wx.getFileSystemManager();
         const tryRead = paths => {
-          if (!paths.length) { resolve({ ok: false, arrayBuffer: () => Promise.resolve(null) }); return; }
+          if (!paths.length) {
+            resolve({ ok: false, arrayBuffer: () => Promise.resolve(null), json: () => Promise.reject(new Error('404')) });
+            return;
+          }
           fsm.readFile({
             path: paths[0],
-            success: r => resolve({ ok: true, arrayBuffer: () => Promise.resolve(r.data) }),
+            success: r => resolve({
+              ok: true,
+              arrayBuffer: () => Promise.resolve(r.data),
+              json: () => Promise.resolve(JSON.parse(utf8(r.data)))
+            }),
             fail: () => tryRead(paths.slice(1))
           });
         };
         tryRead([p, '/' + p]);
       });
     }
+    /* 像素精灵加载：new Image() → wx.createImage（Image.src 支持代码包相对路径） */
+    if (typeof Image === 'undefined' && wx.createImage) {
+      defGlobal('Image', function () { return wx.createImage(); });
+    }
   }
 
-  /* ---------- 触摸桥：wx.onTouch* → 画布 touch 事件（两种环境都走这里） ---------- */
+  /* ---------- 触摸桥：wx.onTouch* → 画布 touch 事件（物理pt → 虚拟px 映射） ---------- */
   const sc = getScreenCanvas();
   if (typeof wx !== 'undefined' && wx.onTouchStart) {
+    const mapT = t => ({ ...t, clientX: t.clientX * view.kx, clientY: t.clientY * view.ky });
     const wrap = res => ({
-      changedTouches: res.changedTouches || [],
-      touches: res.touches || [],
+      changedTouches: (res.changedTouches || []).map(mapT),
+      touches: (res.touches || []).map(mapT),
       preventDefault() {}
     });
     wx.onTouchStart(res => sc._dispatch('touchstart', wrap(res)));
@@ -117,7 +279,59 @@
   }
 
   /* ---------- 供入口/测试使用 ---------- */
-  g.__platform = { IN_WX, screenCanvas: () => getScreenCanvas(), sys };
+  g.__platform = {
+    IN_WX,
+    screenCanvas: () => getScreenCanvas(),
+    sys: real,
+    virtual: view
+  };
+
+  /* ---------- 启动错误自诊断：未捕获异常定期画到屏幕上（体验反馈可截图回报） ----------
+     角标仅 develop 环境可见；体验版/正式版只在发生致命启动错误时显示首行友好提示。 */
+  try {
+    const bootErrs = [];
+    const trap = e => { try { bootErrs.push(String((e && (e.message + '\n' + e.stack)) || e).slice(0, 300)); } catch (x) { /* noop */ } };
+    try { if (wx.onError) wx.onError(trap); } catch (e) { /* noop */ }
+    try { if (typeof g.onError === 'function') { const o = g.onError; g.onError = e => { o(e); trap(e); }; } } catch (e) { /* noop */ }
+    try { if (typeof g.onError !== 'function') defGlobal('onError', e => trap(e)); } catch (e) { /* noop */ }
+    /* 体验版/正式版不向用户暴露原始 stack：非 develop 环境只显示首行友好提示 */
+    let badgeOn = false;
+    let showStack = false;
+    try {
+      const mpInfo = (wx.getAccountInfoSync && wx.getAccountInfoSync().miniProgram) || null;
+      const env = mpInfo ? mpInfo.envVersion : 'develop';
+      badgeOn = env === 'develop';
+      showStack = env === 'develop';
+    } catch (e) { badgeOn = false; showStack = false; }
+    setInterval(() => {
+      try {
+        const cv2 = getScreenCanvas();
+        const x2 = cv2.getContext('2d');
+        if (badgeOn) {
+          /* 角标：v3 视口自检（版本号 + 虚拟视口 + 实际 backing），仅 develop 环境可见 */
+          x2.save();
+          x2.fillStyle = 'rgba(0,255,0,.85)';
+          x2.font = '16px monospace';
+          x2.textBaseline = 'top';
+          x2.fillText('V3 ' + view.vw + 'x' + view.vh + ' dpr=' + view.dpr.toFixed(3) + ' backing=' + cv2.width + 'x' + cv2.height, 8, 6);
+          x2.restore();
+        }
+        if (!bootErrs.length) return;
+        x2.save();
+        x2.fillStyle = '#000'; x2.fillRect(0, 0, cv2.width, cv2.height);
+        x2.fillStyle = '#ff6b81'; x2.font = '28px monospace'; x2.textBaseline = 'top';
+        x2.fillText('BOOT ERROR (x' + bootErrs.length + ')', 20, 20);
+        x2.fillStyle = '#fff'; x2.font = '22px monospace';
+        bootErrs.slice(0, 3).forEach((m, i) => {
+          const shown = showStack ? m : m.split('\n')[0] + '\n(反馈时请附本截图)';
+          for (let j = 0; j * 46 < shown.length && j < 5; j++) {
+            x2.fillText(shown.slice(j * 46, j * 46 + 46), 20, 70 + i * 240 + j * 30);
+          }
+        });
+        x2.restore();
+      } catch (e) { /* noop */ }
+    }, 1500);
+  } catch (e) { /* noop */ }
 })();
 
 ;
@@ -640,14 +854,49 @@ const Sfx = (() => {
     victory() {
       [72, 76, 79, 84, 88, 91].forEach((n, i) => tone({ type: 'square', f0: midi(n), dur: 0.2, vol: 0.15, at: i * 0.12, echo: 0.4 }));
       [96].forEach(n => tone({ type: 'square', f0: midi(n), dur: 0.7, vol: 0.17, at: 0.75, echo: 0.4 }));
+    },
+    // —— 宝箱老虎机演出音效（第五版意见1）——
+    slotTick() { // 老虎机滚动 tick：短促机械哒哒声（连发走 SFX_GAPS 节流）
+      tone({ type: 'square', f0: 2100, f1: 1500, dur: 0.03, vol: 0.05, lp: 5200 });
+      noise({ dur: 0.025, ftype: 'highpass', f0: 3600, vol: 0.03 });
+    },
+    slotStop() { // 奖励窗口落定「哐当」：低频闷响 + 金属点缀
+      tone({ type: 'sine', f0: 230, f1: 70, dur: 0.16, vol: 0.3, atk: 0.004 });
+      noise({ dur: 0.08, f0: 1200, f1: 300, vol: 0.14 });
+      tone({ type: 'square', f0: midi(81), dur: 0.08, vol: 0.08, at: 0.02, lp: 3000 });
+    },
+    rareDing() { // 稀有奖励「叮！」：清亮钟声 + 高频闪光噪
+      tone({ type: 'triangle', f0: midi(96), dur: 0.4, vol: 0.2, echo: 0.35 });
+      tone({ type: 'sine', f0: midi(103), dur: 0.5, vol: 0.1, at: 0.02, echo: 0.35 });
+      noise({ dur: 0.25, ftype: 'highpass', f0: 6000, vol: 0.045 });
+    },
+    dingDong() { // 金币小奖「叮咚」：两音铃铛
+      tone({ type: 'triangle', f0: midi(93), dur: 0.12, vol: 0.16 });
+      tone({ type: 'triangle', f0: midi(86), dur: 0.28, vol: 0.16, at: 0.11, echo: 0.3 });
+    },
+    fanfare(big) { // 大奖号角：上行琶音 + 镲；big=顶格全开多两音长镲
+      const notes = big ? [72, 76, 79, 84, 88, 91] : [72, 76, 79, 84];
+      notes.forEach((n, i) => tone({ type: 'square', f0: midi(n), dur: 0.16, vol: 0.15, at: i * 0.085, echo: 0.35 }));
+      noise({ at: notes.length * 0.085 - 0.05, dur: big ? 0.7 : 0.45, ftype: 'highpass', f0: 4800, vol: big ? 0.08 : 0.05 });
+      if (big) tone({ type: 'square', f0: midi(96), dur: 0.6, vol: 0.16, at: notes.length * 0.085, echo: 0.4 });
+    },
+    meowChoir() { // 群猫欢呼喵合奏：多声部 meowOne 随机音高错落（绕过喵叫冷却的专用合成，静音时同样全安静）
+      for (let i = 0; i < 6; i++) {
+        meowOne(i * 0.07 + U.rand(0, 0.05), {
+          f0: U.rand(480, 780), f1: U.rand(850, 1150), f2: U.rand(420, 640),
+          dur: U.rand(0.18, 0.3), vol: U.rand(0.12, 0.18), bright: U.rand(0.95, 1.4), vib: U.rand(6, 9)
+        });
+      }
     }
   };
 
   // ---------- 音效防过载包装（中后期防噪声墙） ----------
   // 高频武器音效按名字限最小间隔；0.12 秒窗口内非优先音效超过并发预算直接让路；
   // 白名单（升级/宝箱/进化/boss/受伤/结算等一次性大事件）永不节流。BGM 走 tone/noise 不经过这里。
-  const SFX_GAPS = { hit: 70, pop: 80, thunder: 130, bigPop: 150, coin: 50, milk: 90, vacuum: 220, firework: 220, gem: 40 };
-  const SFX_PRIORITY = new Set(['lvl', 'chest', 'evolve', 'boss', 'playerHurt', 'heartbeat', 'gameOver', 'victory', 'click', 'motherWarn', 'motherSkill']);
+  const SFX_GAPS = { hit: 70, pop: 80, thunder: 130, bigPop: 150, coin: 50, milk: 90, vacuum: 220, firework: 220, gem: 40, slotTick: 40 };
+  // 一次性大事件音效永不节流（slotStop/稀有叮/叮咚/号角/喵合奏都是宝箱演出的一次性定音）
+  const SFX_PRIORITY = new Set(['lvl', 'chest', 'evolve', 'boss', 'playerHurt', 'heartbeat', 'gameOver', 'victory', 'click', 'motherWarn', 'motherSkill',
+    'slotStop', 'rareDing', 'dingDong', 'fanfare', 'meowChoir']);
   const gateLast = {}, voiceWin = [];
   let sfxCnt = 0, sfxWinT = 0, sfxRateV = 0;
   function allowSfx(name) {
@@ -804,19 +1053,21 @@ const Art = (() => {
     cream: '#fff3dc', stripe: '#e2853f', earIn: '#ffc9d4',
     nose: '#ff8f9f', collar: '#e05f5f'
   };
-  // 猫耳（模块级：本体/死亡立绘共用）
-  function catEar(x, bx, by, ax, flip) {
+  // 猫耳（模块级：本体/死亡立绘共用；pal = 调色板覆盖，欢呼小猫换毛色用）
+  function catEar(x, bx, by, ax, flip, pal) {
+    pal = pal || CAT;
     x.beginPath();
     x.moveTo(bx[0], bx[1]); x.lineTo(ax[0], ax[1]); x.lineTo(bx[2], bx[3]);
     x.closePath();
-    x.fillStyle = CAT.headTop; x.fill();
+    x.fillStyle = pal.headTop; x.fill();
     x.lineWidth = 4; x.strokeStyle = '#6b4436'; x.stroke();
     x.beginPath();
     x.moveTo(bx[0] + (flip ? 1 : 3), by[0] + 2); x.lineTo(ax[0] + (flip ? 1.5 : 1), ax[1] + 7); x.lineTo(bx[2] - 3, by[0] + 3);
-    x.closePath(); x.fillStyle = CAT.earIn; x.fill();
+    x.closePath(); x.fillStyle = pal.earIn; x.fill();
   }
-  // o: {legF, legB, bob, br(呼吸0/1), tail(0/1), face:'normal'|'blink'|'hurt', dead}
+  // o: {legF, legB, bob, br(呼吸0/1), tail(0/1), face:'normal'|'blink'|'hurt', dead, cat(调色板覆盖：换毛色画欢呼小猫)}
   function drawCat(x, o) {
+    const C = o.cat || CAT; // 毛色调色板：不传用大橘本尊配色
     const tail = o.tail || 0;
     const bob = o.bob || 0;
     const br = o.br || 0;
@@ -825,39 +1076,39 @@ const Art = (() => {
     if (o.dead) { drawCatDead(x); x.restore(); return; }
     /* 尾巴（最底层）：双层描边 + 环纹 + 深色尾尖 */
     const tailDraw = (cp, end, tip) => {
-      strokePath(x, c => { c.moveTo(26, 64); c.quadraticCurveTo(cp[0], cp[1], end[0], end[1]); }, CAT.out, 13);
-      strokePath(x, c => { c.moveTo(26, 64); c.quadraticCurveTo(cp[0], cp[1], end[0], end[1]); }, CAT.furBot, 9);
+      strokePath(x, c => { c.moveTo(26, 64); c.quadraticCurveTo(cp[0], cp[1], end[0], end[1]); }, C.out, 13);
+      strokePath(x, c => { c.moveTo(26, 64); c.quadraticCurveTo(cp[0], cp[1], end[0], end[1]); }, C.furBot, 9);
       // 环纹
-      strokePath(x, c => { c.moveTo(cp[0] * 0.55 + 13, cp[1] * 0.55 + 32); c.lineTo(cp[0] * 0.5 + 11, cp[1] * 0.5 + 40); }, CAT.stripe, 8);
-      circ(x, tip[0], tip[1], 5.6, CAT.stripe, CAT.out, 2.4);
+      strokePath(x, c => { c.moveTo(cp[0] * 0.55 + 13, cp[1] * 0.55 + 32); c.lineTo(cp[0] * 0.5 + 11, cp[1] * 0.5 + 40); }, C.stripe, 8);
+      circ(x, tip[0], tip[1], 5.6, C.stripe, C.out, 2.4);
       shine(x, tip[0] - 1.6, tip[1] - 1.8, 2, 1.3, -0.5);
     };
     if (tail === 0) tailDraw([4, 52], [6, 30], [7, 27]);
     else tailDraw([-2, 62], [-4, 44], [-5, 41]);
     /* 后腿 */
-    blob(x, ellPath(34 + (o.legB || 0), 80, 8.5, 7.5), lg(x, 0, 72, 0, 88, [[0, CAT.headBot], [1, CAT.furBot]]), { ow: 3.5 });
+    blob(x, ellPath(34 + (o.legB || 0), 80, 8.5, 7.5), lg(x, 0, 72, 0, 88, [[0, C.headBot], [1, C.furBot]]), { ow: 3.5 });
     /* 身体：渐变 + 双描边 */
     blob(x, ellPath(47, 62, 26, 21 + br * 0.8),
-      lg(x, 0, 40, 0, 84, [[0, CAT.furTop], [0.55, '#ffb970'], [1, CAT.furBot]]), { ow: 4 });
+      lg(x, 0, 40, 0, 84, [[0, C.furTop], [0.55, C.furMid || '#ffb970'], [1, C.furBot]]), { ow: 4 });
     /* 肚皮（柔边） */
     x.save();
-    ell(x, 50, 69, 15, 12.5, rg(x, 50, 66, 3, 17, [[0, CAT.cream], [0.75, '#fff0d6'], [1, 'rgba(255,240,214,0)']]));
+    ell(x, 50, 69, 15, 12.5, rg(x, 50, 66, 3, 17, [[0, C.cream], [0.75, '#fff0d6'], [1, 'rgba(255,240,214,0)']]));
     x.restore();
     /* 背部条纹 */
     x.save(); x.globalAlpha = 0.9;
-    strokePath(x, c => { c.moveTo(32, 46); c.quadraticCurveTo(36, 52, 32, 58); }, CAT.stripe, 5);
-    strokePath(x, c => { c.moveTo(44, 42); c.quadraticCurveTo(48, 49, 44, 56); }, CAT.stripe, 5);
+    strokePath(x, c => { c.moveTo(32, 46); c.quadraticCurveTo(36, 52, 32, 58); }, C.stripe, 5);
+    strokePath(x, c => { c.moveTo(44, 42); c.quadraticCurveTo(48, 49, 44, 56); }, C.stripe, 5);
     x.restore();
     /* 前腿（走路抬起时露爪垫） */
     const fLeg = 62 + (o.legF || 0);
-    blob(x, ellPath(fLeg, 81, 8, 7.5), lg(x, 0, 73, 0, 89, [[0, CAT.headBot], [1, CAT.furBot]]), { ow: 3.5 });
+    blob(x, ellPath(fLeg, 81, 8, 7.5), lg(x, 0, 73, 0, 89, [[0, C.headBot], [1, C.furBot]]), { ow: 3.5 });
     if (o.legF < -2) { // 抬起的爪爪
-      circ(x, fLeg - 2.4, 84.5, 1.5, CAT.earIn); circ(x, fLeg + 1.6, 85, 1.5, CAT.earIn); circ(x, fLeg, 82.6, 1.8, CAT.earIn);
+      circ(x, fLeg - 2.4, 84.5, 1.5, C.earIn); circ(x, fLeg + 1.6, 85, 1.5, C.earIn); circ(x, fLeg, 82.6, 1.8, C.earIn);
     }
     /* 项圈 + 铃铛（脖子处） */
     x.save();
     x.beginPath(); x.ellipse(60, 56, 21, 15, 0, Math.PI * 0.18, Math.PI * 0.86);
-    x.lineWidth = 7.5; x.strokeStyle = CAT.collar; x.stroke();
+    x.lineWidth = 7.5; x.strokeStyle = C.collar; x.stroke();
     x.beginPath(); x.ellipse(60, 56, 21, 15, 0, Math.PI * 0.18, Math.PI * 0.86);
     x.lineWidth = 2; x.strokeStyle = '#b03f43'; x.stroke();
     x.beginPath(); x.ellipse(60, 56, 21, 15, 0, Math.PI * 0.24, Math.PI * 0.8);
@@ -870,14 +1121,14 @@ const Art = (() => {
     const hy = 38 + (o.br ? -0.8 : 0);
     // 耳朵（先画，被头压住底部）
     if (o.face === 'hurt') { // 受击耳朵压平
-      catEar(x, [46, 22, 62, 16], [0], [36, 8], false);
-      catEar(x, [78, 20, 92, 15], [0], [96, 10], true);
+      catEar(x, [46, 22, 62, 16], [0], [36, 8], false, C);
+      catEar(x, [78, 20, 92, 15], [0], [96, 10], true, C);
     } else {
-      catEar(x, [45, 22, 61, 15], [0], [40, 2], false);
-      catEar(x, [75, 20, 91, 14], [0], [88, 3], true);
+      catEar(x, [45, 22, 61, 15], [0], [40, 2], false, C);
+      catEar(x, [75, 20, 91, 14], [0], [88, 3], true, C);
     }
     // 头：渐变 + 双描边 + 脸侧绒毛
-    blob(x, circPath(64, hy, 26), rg(x, 58, hy - 8, 6, 34, [[0, CAT.headTop], [0.7, CAT.headBot], [1, '#ef8f45']]), { ow: 4 });
+    blob(x, circPath(64, hy, 26), rg(x, 58, hy - 8, 6, 34, [[0, C.headTop], [0.7, C.headBot], [1, C.headShade || '#ef8f45']]), { ow: 4 });
     // 脸侧绒毛（小三角）
     x.fillStyle = '#ffe9c9';
     for (const [fx, fy, dir] of [[40, hy + 6, -1], [88, hy + 4, 1]]) {
@@ -888,9 +1139,9 @@ const Art = (() => {
     }
     // 额头条纹
     x.save(); x.globalAlpha = 0.92;
-    strokePath(x, c => { c.moveTo(58, hy - 24); c.lineTo(58, hy - 17); }, CAT.stripe, 4);
-    strokePath(x, c => { c.moveTo(65, hy - 26); c.lineTo(65, hy - 18); }, CAT.stripe, 4);
-    strokePath(x, c => { c.moveTo(72, hy - 24); c.lineTo(72, hy - 17); }, CAT.stripe, 4);
+    strokePath(x, c => { c.moveTo(58, hy - 24); c.lineTo(58, hy - 17); }, C.stripe, 4);
+    strokePath(x, c => { c.moveTo(65, hy - 26); c.lineTo(65, hy - 18); }, C.stripe, 4);
+    strokePath(x, c => { c.moveTo(72, hy - 24); c.lineTo(72, hy - 17); }, C.stripe, 4);
     x.restore();
     // 眼睛
     const eyeList = [[52, hy - 2, 7], [77, hy - 4, 8]];
@@ -904,8 +1155,8 @@ const Art = (() => {
     // 鼻子 + 嘴 ω
     x.save(); x.translate(64, hy + 8);
     x.beginPath(); x.moveTo(-3.4, -1.6); x.lineTo(3.4, -1.6); x.lineTo(0, 2.6);
-    x.closePath(); x.fillStyle = CAT.nose; x.fill();
-    x.lineWidth = 2; x.strokeStyle = CAT.out; x.stroke();
+    x.closePath(); x.fillStyle = C.nose; x.fill();
+    x.lineWidth = 2; x.strokeStyle = C.out; x.stroke();
     x.restore();
     if (o.face === 'hurt') {
       strokePath(x, c => { c.moveTo(64, hy + 11); c.quadraticCurveTo(60, hy + 15, 57, hy + 11); c.quadraticCurveTo(64, hy + 17, 71, hy + 11); }, OUT, 2.2);
@@ -968,6 +1219,21 @@ const Art = (() => {
   const P_DEAD = bake2(112, 112, x => drawCat(x, { dead: true }));
   const playerFrames = { walk: P_WALK, idle: P_IDLE, blink: P_BLINK, hurt: P_HURT, dead: P_DEAD };
   const playerWhite = whiteVersion(P_IDLE[0]);
+
+  /* ================= 欢呼小猫（宝箱大奖/金币头奖庆祝演出用） =================
+     同一套 drawCat 画法换毛色烘焙：每只 2 帧（蹲 / 跳，弹跳+抬爪+换尾），
+     演出层只做 drawImage 帧轮播 + 相位蹦跳，绝不每帧重绘 drawCat。 */
+  const CHEER_PALS = [
+    null, // 大橘本尊（默认配色）
+    { furTop: '#e8edf7', furBot: '#aeb9d6', headTop: '#eef2fb', headBot: '#b7c2dd', furMid: '#c9d2e6', headShade: '#a9b4d0', stripe: '#93a0c0', collar: '#5f8fe0' }, // 蓝灰
+    { furTop: '#9a8f8a', furBot: '#5f5551', headTop: '#a99d97', headBot: '#6b605b', furMid: '#7d726d', headShade: '#5c524e', stripe: '#4e4541', collar: '#ffd34d' }, // 烟灰
+    { furTop: '#fffdf6', furBot: '#e8ddc8', headTop: '#fffef9', headBot: '#efe6d4', furMid: '#f3ecdc', headShade: '#ddd0b8', stripe: '#d9c9a8', collar: '#7dc46a' }, // 雪白
+    { furTop: '#f7e3c0', furBot: '#c9a26b', headTop: '#f9e8ca', headBot: '#cfae7c', furMid: '#dcbf92', headShade: '#b8945f', stripe: '#a97f4b', collar: '#e05f9f' }, // 奶茶
+    { furTop: '#d8ccf5', furBot: '#a291d9', headTop: '#e0d6f8', headBot: '#ab9ade', furMid: '#bdb0e6', headShade: '#9887cc', stripe: '#8a79c2', collar: '#e0705f' }  // 香芋
+  ].map(p => p ? Object.assign({}, CAT, p) : CAT);
+  const CHEER_CATS = CHEER_PALS.map(pal => [0, 1].map(f => bake2(112, 112, x => drawCat(x, {
+    cat: pal, br: 0, tail: f, bob: f ? -7 : 0, legF: f ? -7 : 0, legB: f ? -2 : 0
+  }))));
 
   /* ----- 菜单大猫：坐姿举爪（两帧尾巴 + 眨眼） ----- */
   function drawMenuCat(x, o) {
@@ -2143,10 +2409,163 @@ const Art = (() => {
   return {
     OUT, OUTW, rr, ell, circ, eyeG, blush, rg,
     playerFrames, playerWhite, menuCat, menuCatBlink,
+    cheer: CHEER_CATS,
     E, EW, EB, EH,
     items, projs, slash, icons, decor, glows, eliteCrown,
     sky, drawLightning
   };
+})();
+
+;
+window.PIXEL_MANIFEST = {"player": {"idle": ["characters/daju/idle_1.png", "characters/daju/idle_2.png"], "blink": ["characters/daju/idle_2.png"], "menu": ["characters/daju/idle_1.png", "characters/daju/idle_3.png"], "walk": ["characters/daju/walk_1.png", "characters/daju/walk_2.png", "characters/daju/walk_3.png", "characters/daju/walk_4.png"], "hurt": ["characters/daju/hurt_1.png"], "dead": ["characters/daju/die_1.png"], "dash": ["characters/daju/dash_1.png", "characters/daju/dash_2.png"]}, "enemies": {"rat": {"walk": ["characters/rat/idle_1.png", "characters/rat/idle_2.png"], "scale": 2, "blink": ["characters/rat/idle_2.png"]}, "sparrow": {"walk": ["characters/sparrow/idle_1.png", "characters/sparrow/idle_2.png"], "scale": 2, "blink": ["characters/sparrow/idle_2.png"]}, "snail": {"walk": ["characters/snail/idle_1.png", "characters/snail/idle_2.png"], "scale": 2, "blink": ["characters/snail/idle_2.png"]}, "goose": {"walk": ["characters/goose/idle_1.png", "characters/goose/idle_2.png"], "scale": 2, "blink": ["characters/goose/idle_2.png"]}, "bat": {"walk": ["characters/bat/idle_1.png", "characters/bat/idle_2.png"], "scale": 2, "blink": ["characters/bat/idle_2.png"]}, "raccoon": {"walk": ["characters/raccoon/idle_1.png", "characters/raccoon/idle_2.png"], "scale": 2, "blink": ["characters/raccoon/idle_2.png"]}, "bulldog": {"walk": ["characters/bulldog/idle_1.png", "characters/bulldog/idle_2.png"], "scale": 2, "blink": ["characters/bulldog/idle_2.png"]}, "calico": {"walk": ["characters/calico/idle_1.png", "characters/calico/idle_2.png"], "scale": 2, "blink": ["characters/calico/idle_2.png"]}, "pigeon": {"walk": ["characters/pigeon/idle_1.png", "characters/pigeon/idle_2.png"], "scale": 2, "blink": ["characters/pigeon/idle_2.png"]}, "boss": {"walk": ["characters/ratking/idle_1.png", "characters/ratking/idle_2.png"], "scale": 2, "blink": ["characters/ratking/idle_2.png"], "attack": ["characters/ratking/attack_1.png", "characters/ratking/attack_2.png"], "tele": "characters/ratking/tele_1.png", "dead": "characters/ratking/die_2.png"}, "mother": {"walk": ["characters/mother/idle_1.png", "characters/mother/idle_2.png"], "scale": 2, "blink": ["characters/mother/idle_2.png"], "attack": ["characters/mother/wind_1.png", "characters/mother/wind_2.png"], "tele": "characters/mother/slash_1.png", "dead": "characters/mother/die_1.png"}}, "projs": {"axe": ["weapons/proj/axe_1.png"], "fishProj": ["weapons/proj/fish_1.png"], "litter": ["weapons/proj/litter_1.png"], "note": ["weapons/proj/note_1.png"], "yarn": ["weapons/proj/orbit_1.png"], "yarnBig": ["weapons/proj/orbit_2.png"]}, "items": {"gem1": "items/pickups/gem_1/tier_1.png", "gem2": "items/pickups/gem_2/tier_1.png", "gem3": "items/pickups/gem_3/tier_1.png", "coin": "items/pickups/coin/coin_1.png", "chestClosed": "items/pickups/chest/closed.png", "chestOpen": "items/pickups/chest/open.png", "milk": "items/icons/milk.png", "vacuum": "items/icons/vacuum.png", "firework": "items/icons/firework.png"}, "icons": {"paw": "items/pickups/stamp/idle_1.png", "claw": "weapons/icons/claw.png", "claw_evo": "weapons/icons/claw_evo.png", "note": "weapons/icons/note.png", "note_evo": "weapons/icons/note_evo.png", "fish": "weapons/icons/fish.png", "fish_evo": "weapons/icons/fish_evo.png", "axe": "weapons/icons/axe.png", "axe_evo": "weapons/icons/axe_evo.png", "orbit": "weapons/icons/orbit.png", "orbit_evo": "weapons/icons/orbit_evo.png", "aura": "weapons/icons/aura.png", "aura_evo": "weapons/icons/aura_evo.png", "litter": "weapons/icons/litter.png", "litter_evo": "weapons/icons/litter_evo.png", "zap": "weapons/icons/zap.png", "zap_evo": "weapons/icons/zap_evo.png", "catnip": "items/icons/catnip.png", "alarm": "items/icons/alarm.png", "yarnball": "items/icons/yarnball.png", "bell": "items/icons/bell.png", "gloves": "items/icons/gloves.png", "magnetfish": "items/icons/magnetfish.png", "koi": "items/icons/koi.png", "milk": "items/icons/milk.png", "firework": "items/icons/firework.png", "vacuum": "items/icons/vacuum.png", "coin": "items/icons/coin.png", "dmg": "items/icons/dmg.png", "cd": "items/icons/cd.png", "area": "items/icons/area.png", "amount": "items/icons/amount.png", "pierce": "items/icons/pierce.png", "crit": "items/icons/crit.png", "lifesteal": "items/icons/lifesteal.png", "scale": "items/icons/scale.png", "radius": "items/icons/radius.png"}, "decor": {"bench": "maps/oldtown/props/bench.png", "boxes": "maps/oldtown/props/boxes.png", "hydrant": "props/hydrant/idle_1.png", "lamp": "props/vending/on.png", "potted": "maps/oldtown/props/planter.png", "sign": "maps/onsen/props/sign.png", "tree": "maps/sakura/props/sakura.png", "vending": "props/vending/on.png", "bush": "props/decor/bush.png", "manhole": "props/decor/manhole.png", "crosswalk": "props/decor/crosswalk.png", "pond": "props/decor/pond.png", "puddle": "props/decor/puddle.png", "fountain": "props/decor/fountain.png"}, "slash": "fx/hitstar/s2.png", "sky": {"moon": {"path": "props/decor/moon.png", "w": 200, "h": 200}, "cloud1": {"path": "props/decor/cloud1.png", "w": 300, "h": 112}, "cloud2": {"path": "props/decor/cloud2.png", "w": 240, "h": 90}, "skyline": {"path": "props/decor/skyline.png", "w": 1024, "h": 210}}, "eliteCrown": "ui/elite_crown.png"};
+
+;
+/*
+ * art_pixel.js —— 像素素材适配层（M4）
+ * 在原版 art.js 之后加载：异步读取 pixel-assets/ 的 PNG，把 Art 的
+ * 角色/敌人/弹幕/道具/图标字段替换为像素精灵；保留原版的
+ * 光晕/天空/闪电等代码绘制部分。drawImage 一律不平滑。
+ */
+(function () {
+  'use strict';
+  if (typeof Art === 'undefined') { __setDocTitle('AP:no Art'); return; }
+
+  const MANIFEST_URL = 'pixel-assets/manifest.json';
+
+  // 把一张小图按整数倍 scale 烘焙到 canvas
+  function bake(img, scale, dw, dh) {
+    const c = document.createElement('canvas');
+    c.width = dw || img.width * scale;
+    c.height = dh || img.height * scale;
+    const x = c.getContext('2d');
+    x.imageSmoothingEnabled = false;
+    x.drawImage(img, 0, 0, c.width, c.height);
+    return c;
+  }
+  // 整体白闪剪影（受击用）
+  function whiteOf(c) {
+    const w = document.createElement('canvas');
+    w.width = c.width; w.height = c.height;
+    const x = w.getContext('2d');
+    x.drawImage(c, 0, 0);
+    x.globalCompositeOperation = 'source-in';
+    x.fillStyle = '#fff6e0';
+    x.fillRect(0, 0, w.width, w.height);
+    return w;
+  }
+
+  const load = (src) => new Promise((res, rej) => {
+    const im = new Image();
+    im.onload = () => res(im);
+    im.onerror = () => rej(new Error(src));
+    im.src = src;
+  });
+
+  __setDocTitle('AP:fetching');
+  const manifestPromise = window.PIXEL_MANIFEST
+    ? Promise.resolve(window.PIXEL_MANIFEST)
+    : fetch(MANIFEST_URL).then((r) => r.json());
+  manifestPromise.then(async (M) => {
+    __setDocTitle('AP:stage-manifest');
+    __setDocTitle('AP:manifest-ok');
+    const cache = {};
+    const get = async (p) => (cache[p] || (cache[p] = await load('pixel-assets/' + p)));
+
+    async function frame(p, scale) {
+      const img = await get(p);
+      return bake(img, scale);
+    }
+
+    /* ---- 主角：48 网格 → 96 画布（原引擎按 112 槽位绘制，居中偏移在替换时吸收） ---- */
+    const PS = 2; // 网格→画布倍率
+    const pf = M.player;
+    const idle = await Promise.all(pf.idle.map((p) => frame(p, PS)));
+    const blink = await Promise.all(pf.blink.map((p) => frame(p, PS)));
+    const walk = await Promise.all(pf.walk.map((p) => frame(p, PS)));
+    const hurt = await Promise.all(pf.hurt.map((p) => frame(p, PS)));
+    const dead = await Promise.all(pf.dead.map((p) => frame(p, PS)));
+    const dash = pf.dash ? await Promise.all(pf.dash.map((p) => frame(p, PS))) : [];
+    // 原版 idle 2 帧（第 2 帧天然眨眼间隔）；blink 与原版 playerFrames 同构为单帧（drawPlayer 直接 drawImage）
+    Art.playerFrames = {
+      idle: [idle[0], idle[1] || idle[0]],
+      blink: blink[0],
+      walk: walk,
+      hurt: hurt[0],
+      dead: dead[0],
+      dash: dash,
+    };
+    console.log('[art_pixel] playerFrames idle width =', Art.playerFrames.idle[0].width, 'frames:', idle.length, walk.length);
+    Art.menuCatBlink = blink[0] ? bake(blink[0], 10) : idle[0];
+    const menu1 = idle[0], menu2 = pf.menu ? await frame(pf.menu[1], PS) : idle[0];
+    Art.menuCat = [menu1, menu2];
+    Art.playerWhite = whiteOf(idle[0]);
+
+    __setDocTitle('AP:stage-player-done');
+    /* ---- 敌人 ---- */
+    for (const [type, def] of Object.entries(M.enemies)) {
+      const scale = def.scale;
+      const walk = await Promise.all(def.walk.map((p) => frame(p, scale)));
+      const set = { walk, idle: walk };
+      if (def.blink) set.blink = await Promise.all(def.blink.map((p) => frame(p, scale)));
+      if (def.attack) set.attack = await Promise.all(def.attack.map((p) => frame(p, scale)));
+      if (def.tele) set.tele = await frame(def.tele, scale);
+      if (def.dead) set.dead = await frame(def.dead, scale);
+      Art.E[type] = set;
+      // EW：整体白闪剪影（按 walk 帧索引对齐的数组）
+      Art.EW[type] = walk.map(whiteOf);
+    }
+
+    /* ---- 弹幕 ---- */
+    Art.projs = Art.projs || {};
+    for (const [k, paths] of Object.entries(M.projs || {})) {
+      if (Array.isArray(paths)) Art.projs[k] = await Promise.all(paths.map((p) => frame(p, 2)));
+      else Art.projs[k] = await frame(paths, 2);
+    }
+    if (M.slash) Art.slash = await frame(M.slash, 2);
+
+    /* ---- 道具/图标 ---- */
+    Art.items = Art.items || {};
+    for (const [k, p] of Object.entries(M.items || {})) Art.items[k] = await frame(p, 2);
+    Art.icons = Art.icons || {};
+    for (const [k, p] of Object.entries(M.icons || {})) Art.icons[k] = await frame(p, 2);
+    const pawFallback = await (async () => { const p = M.icons && M.icons.paw ? await get(M.icons.paw) : null; return p ? bake(p, 2) : canvas2(112, 112); })();
+    function canvas2(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+    Art.icons = new Proxy(Art.icons, { get(t, k) { if (k in t) return t[k]; return t[k] = pawFallback; } });
+
+    /* ---- 地物 ---- */
+    Art.decor = Art.decor || {};
+    for (const [k, p] of Object.entries(M.decor || {})) Art.decor[k] = await frame(p, 2);
+
+    /* ---- 王冠（精英） ---- */
+    if (M.eliteCrown) Art.eliteCrown = await frame(M.eliteCrown, 2);
+
+    __setDocTitle('AP:stage-before-sky moon=' + (M.sky ? 'hasSky' : 'noSky'));
+    /* ---- 像素天空（月/云/天际线） ---- */
+    if (M.sky) {
+      Art.sky = Art.sky || {};
+      for (const [k, def] of Object.entries(M.sky)) {
+        const img = await get(def.path);
+        Art.sky[k] = bake(img, 1, def.w, def.h);
+      }
+    }
+
+    /* ---- 全局：像素渲染 ---- */
+    const cv = document.getElementById('game');
+    if (cv) {
+      const ctx = cv.getContext('2d');
+      const noSmooth = () => { ctx.imageSmoothingEnabled = false; };
+      noSmooth();
+      ;
+      window.addEventListener('resize', noSmooth);
+    }
+    __setDocTitle('喵都幸存者 Meow Survivors');
+    __PIXEL_GATE_RESOLVE();;
+  }).catch((err) => {
+    /* 兜底:file:// 下 fetch 会被浏览器拦下,或素材缺失——回退原版矢量美术,游戏照常开局 */
+    console.error('[art_pixel] 素材加载失败，回退原版矢量美术：', err);
+    __setDocTitle('喵都幸存者 Meow Survivors');
+    __PIXEL_GATE_RESOLVE();;
+  });
 })();
 
 ;
@@ -2540,6 +2959,350 @@ const MAPS = (() => {
         circ(x, lx, ly + 9, 3.6, cols[i % 4], 'rgba(60,40,40,.7)', 1.4);
       }
     });
+    /* ---- 意见2/3 新增精灵（像素规范：墨色描边 / 2 阶平涂 + 暗带 / 硬偏移落影） ---- */
+    // 新集装箱配色：青 / 琥珀（集装箱堆场色彩交错用）
+    S.contCyan = S.container('#3f9aa8'); S.contAmber = S.container('#c9883a');
+    /* 老城钟楼（地标大建筑） */
+    S.clockTower = bake2(180, 350, x => {
+      // 硬偏移落影
+      x.save(); x.globalAlpha = 0.3; x.fillStyle = '#0c0a18';
+      rr(x, 48, 281, 180, 350, 10); x.fill(); x.restore();
+      // 台基
+      rr(x, 40, 268, 100, 74, 8); x.fillStyle = '#8a84a0'; x.fill();
+      rr(x, 40, 314, 100, 28, 6); x.fillStyle = 'rgba(0,0,0,.18)'; x.fill();
+      x.lineWidth = 3.6; x.strokeStyle = '#211b2c'; x.stroke();
+      // 钟体
+      rr(x, 54, 106, 72, 170, 8); x.fillStyle = '#a89cb4'; x.fill();
+      rr(x, 54, 220, 72, 56, 6); x.fillStyle = 'rgba(0,0,0,.15)'; x.fill();
+      x.lineWidth = 3.6; x.strokeStyle = '#211b2c'; x.stroke();
+      // 拱窗
+      for (const wy of [124, 236]) {
+        x.beginPath(); x.moveTo(78, wy + 24); x.lineTo(78, wy + 12); x.arc(90, wy + 12, 12, Math.PI, 0); x.lineTo(102, wy + 24); x.closePath();
+        x.fillStyle = '#332c3d'; x.fill(); x.lineWidth = 2.6; x.strokeStyle = '#211b2c'; x.stroke();
+      }
+      // 钟面
+      circ(x, 90, 196, 25, '#f2ead2', '#211b2c', 3.4);
+      x.strokeStyle = '#211b2c'; x.lineWidth = 3;
+      x.beginPath(); x.moveTo(90, 196); x.lineTo(90, 182); x.moveTo(90, 196); x.lineTo(101, 201); x.stroke();
+      circ(x, 90, 196, 3, '#211b2c');
+      // 瞭望层 + 大钟腔
+      rr(x, 46, 60, 88, 48, 7); x.fillStyle = '#6a6480'; x.fill(); x.lineWidth = 3.6; x.strokeStyle = '#211b2c'; x.stroke();
+      x.beginPath(); x.moveTo(66, 104); x.lineTo(66, 86); x.arc(90, 86, 24, Math.PI, 0); x.lineTo(114, 104); x.closePath();
+      x.fillStyle = '#2c2636'; x.fill(); x.lineWidth = 3; x.strokeStyle = '#211b2c'; x.stroke();
+      circ(x, 90, 94, 10, '#e8b45c', '#a8782e', 2.6);
+      // 尖顶
+      x.beginPath(); x.moveTo(90, 8); x.lineTo(134, 62); x.lineTo(46, 62); x.closePath();
+      x.fillStyle = '#c05a52'; x.fill(); x.lineWidth = 3.6; x.strokeStyle = '#211b2c'; x.stroke();
+      x.fillStyle = 'rgba(255,255,255,.16)';
+      x.beginPath(); x.moveTo(90, 8); x.lineTo(112, 62); x.lineTo(90, 62); x.closePath(); x.fill();
+      // 尖顶小旗
+      x.fillStyle = '#ffd34d';
+      x.beginPath(); x.moveTo(90, 8); x.lineTo(114, 15); x.lineTo(90, 22); x.closePath(); x.fill();
+      x.lineWidth = 2; x.strokeStyle = '#a8782e'; x.stroke();
+    });
+    /* 老城大牌坊（跨街门洞：两柱用 pillars 阻挡，中央通行） */
+    S.paifang = bake2(300, 210, x => {
+      shadow(x, 150, 202, 100, 9);
+      // 四柱（明柱粗 + 边柱细）
+      for (const [px, pw] of [[70, 22], [230, 22], [22, 14], [278, 14]]) {
+        rr(x, px - pw / 2, 40, pw, 162, 4); x.fillStyle = '#b8443c'; x.fill();
+        x.lineWidth = 3; x.strokeStyle = '#211b2c'; x.stroke();
+      }
+      // 柱础
+      for (const px of [70, 230]) { rr(x, px - 16, 192, 32, 12, 3); x.fillStyle = '#5d5670'; x.fill(); x.lineWidth = 2.4; x.strokeStyle = '#211b2c'; x.stroke(); }
+      // 额枋（红绿相间三层）
+      rr(x, 12, 108, 276, 18, 4); x.fillStyle = '#2f5a46'; x.fill(); x.lineWidth = 3; x.strokeStyle = '#211b2c'; x.stroke();
+      rr(x, 30, 86, 240, 16, 4); x.fillStyle = '#c05a52'; x.fill(); x.stroke();
+      rr(x, 46, 66, 208, 14, 4); x.fillStyle = '#2f5a46'; x.fill(); x.stroke();
+      // 金字匾额
+      rr(x, 116, 108, 68, 30, 4); x.fillStyle = '#2a2438'; x.fill(); x.lineWidth = 2.6; x.strokeStyle = '#211b2c'; x.stroke();
+      rr(x, 120, 112, 60, 22, 3); x.fillStyle = '#ffd34d'; x.fill(); x.lineWidth = 2; x.stroke();
+      x.fillStyle = '#b8443c'; x.font = '900 17px sans-serif'; x.textAlign = 'center'; x.fillText('老街', 150, 129);
+      // 出檐（两端上翘）
+      rr(x, 6, 44, 288, 16, 6); x.fillStyle = '#3a3450'; x.fill(); x.lineWidth = 3.2; x.strokeStyle = '#211b2c'; x.stroke();
+      x.fillStyle = '#3a3450';
+      x.beginPath(); x.moveTo(10, 52); x.quadraticCurveTo(2, 38, 18, 30); x.lineTo(30, 44); x.closePath(); x.fill();
+      x.beginPath(); x.moveTo(290, 52); x.quadraticCurveTo(298, 38, 282, 30); x.lineTo(270, 44); x.closePath(); x.fill();
+      // 顶檐瓦垄
+      rr(x, 22, 30, 256, 12, 5); x.fillStyle = '#2c2740'; x.fill(); x.lineWidth = 2.6; x.strokeStyle = '#211b2c'; x.stroke();
+      x.strokeStyle = 'rgba(255,255,255,.14)'; x.lineWidth = 2;
+      x.beginPath();
+      for (let gx = 40; gx < 260; gx += 24) { x.moveTo(gx, 32); x.lineTo(gx, 40); }
+      x.stroke();
+      // 檐角风铃
+      for (const px of [34, 266]) circ(x, px, 54, 4, '#e8b45c', '#a8782e', 2);
+    });
+    /* 樱花神社拜殿（地标大建筑） */
+    S.shrine = bake2(340, 250, x => {
+      // 硬偏移落影
+      x.save(); x.globalAlpha = 0.3; x.fillStyle = '#0c0a18'; rr(x, 28, 105, 340, 250, 10); x.fill(); x.restore();
+      // 主体
+      rr(x, 20, 92, 300, 148, 8); x.fillStyle = '#8a6a52'; x.fill();
+      rr(x, 20, 176, 300, 64, 6); x.fillStyle = 'rgba(0,0,0,.18)'; x.fill();
+      x.lineWidth = 3.6; x.strokeStyle = '#211b2c'; x.stroke();
+      // 前列红柱
+      for (const px of [46, 294]) {
+        rr(x, px - 9, 118, 18, 122, 4); x.fillStyle = '#c04a40'; x.fill();
+        x.lineWidth = 2.8; x.strokeStyle = '#211b2c'; x.stroke();
+      }
+      // 中门 + 参拜铃
+      rr(x, 150, 152, 40, 88, 5); x.fillStyle = '#3a2c28'; x.fill(); x.lineWidth = 2.6; x.strokeStyle = '#211b2c'; x.stroke();
+      x.strokeStyle = '#4a3826'; x.lineWidth = 2.4; x.beginPath(); x.moveTo(170, 152); x.lineTo(170, 134); x.stroke();
+      circ(x, 170, 127, 9, '#e8b45c', '#a8782e', 2.4);
+      // 大屋顶
+      x.beginPath(); x.moveTo(6, 98); x.quadraticCurveTo(26, 56, 170, 48); x.quadraticCurveTo(314, 56, 334, 98);
+      x.quadraticCurveTo(296, 84, 170, 80); x.quadraticCurveTo(44, 84, 6, 98); x.closePath();
+      x.fillStyle = '#4a4658'; x.fill(); x.lineWidth = 3.6; x.strokeStyle = '#211b2c'; x.stroke();
+      x.fillStyle = 'rgba(255,255,255,.10)';
+      x.beginPath(); x.moveTo(170, 48); x.quadraticCurveTo(240, 52, 280, 72); x.quadraticCurveTo(220, 66, 170, 66); x.closePath(); x.fill();
+      // 正脊 + 千木
+      rr(x, 108, 40, 124, 13, 4); x.fillStyle = '#3a3646'; x.fill(); x.lineWidth = 2.6; x.strokeStyle = '#211b2c'; x.stroke();
+      x.strokeStyle = '#3a3646'; x.lineWidth = 7;
+      x.beginPath(); x.moveTo(116, 44); x.lineTo(102, 20); x.moveTo(224, 44); x.lineTo(238, 20); x.stroke();
+      // 檐下悬灯
+      for (const lx of [70, 270]) {
+        x.strokeStyle = '#4a3826'; x.lineWidth = 1.8; x.beginPath(); x.moveTo(lx, 100); x.lineTo(lx, 112); x.stroke();
+        ell(x, lx, 121, 8, 10, '#e05548', '#8a2a26', 2);
+      }
+    });
+    /* 港湾岸桥（龙门吊，地标：两腿 pillars 阻挡，门洞可穿行） */
+    S.gantry = bake2(320, 340, x => {
+      shadow(x, 160, 330, 116, 9);
+      // 海侧 / 陆侧门架腿（±120，警示涂装）
+      for (const lx of [40, 280]) {
+        rr(x, lx - 13, 84, 26, 226, 5); x.fillStyle = '#3e5e80'; x.fill();
+        x.lineWidth = 3.2; x.strokeStyle = '#22303e'; x.stroke();
+        x.fillStyle = '#e8b45c'; x.fillRect(lx - 13, 286, 26, 8);
+      }
+      // 交叉斜撑
+      x.strokeStyle = 'rgba(34,48,62,.5)'; x.lineWidth = 8;
+      x.beginPath(); x.moveTo(53, 130); x.lineTo(267, 220); x.moveTo(267, 130); x.lineTo(53, 220); x.stroke();
+      // 大梁 + 塔架拉杆
+      rr(x, 16, 58, 288, 26, 6); x.fillStyle = '#46688c'; x.fill(); x.lineWidth = 3.4; x.strokeStyle = '#22303e'; x.stroke();
+      x.strokeStyle = '#22303e'; x.lineWidth = 4;
+      x.beginPath(); x.moveTo(40, 84); x.lineTo(160, 30); x.lineTo(280, 84); x.stroke();
+      // 前小车 + 吊具
+      rr(x, 146, 84, 36, 20, 4); x.fillStyle = '#33404e'; x.fill(); x.lineWidth = 2.6; x.strokeStyle = '#211b2c'; x.stroke();
+      x.strokeStyle = '#33404e'; x.lineWidth = 2.6;
+      x.beginPath(); x.moveTo(164, 104); x.lineTo(164, 236); x.stroke();
+      rr(x, 146, 236, 36, 18, 3); x.fillStyle = '#c9883a'; x.fill(); x.lineWidth = 2.6; x.strokeStyle = '#211b2c'; x.stroke();
+      // 爬梯 + 航标灯
+      x.strokeStyle = 'rgba(255,255,255,.25)'; x.lineWidth = 2;
+      x.beginPath();
+      for (let ty = 100; ty < 288; ty += 14) { x.moveTo(46, ty); x.lineTo(58, ty); }
+      x.stroke();
+      circ(x, 300, 50, 5, '#ff6a5a', '#8a2a26', 2);
+    });
+    /* 远洋货轮（海上装饰大件：水已阻挡，无需碰撞） */
+    S.cargoShip = bake2(460, 190, x => {
+      shadow(x, 230, 178, 190, 8);
+      // 船体
+      x.beginPath();
+      x.moveTo(14, 100); x.quadraticCurveTo(54, 68, 150, 64); x.lineTo(396, 64);
+      x.quadraticCurveTo(446, 68, 452, 96); x.quadraticCurveTo(444, 132, 414, 142);
+      x.lineTo(58, 142); x.quadraticCurveTo(22, 130, 14, 100); x.closePath();
+      x.fillStyle = '#7a3a34'; x.fill(); x.lineWidth = 3.6; x.strokeStyle = '#2a1c20'; x.stroke();
+      // 舷侧浅色带 + 吃水线
+      rr(x, 26, 96, 412, 13, 4); x.fillStyle = '#d8d2c4'; x.fill();
+      x.strokeStyle = 'rgba(42,28,32,.4)'; x.lineWidth = 2; x.stroke();
+      x.strokeStyle = 'rgba(16,28,44,.55)'; x.lineWidth = 3;
+      x.beginPath(); x.moveTo(22, 122); x.lineTo(444, 122); x.stroke();
+      // 上层建筑（艉楼）+ 驾驶窗 + 烟囱
+      rr(x, 58, 26, 88, 38, 5); x.fillStyle = '#e8e2d4'; x.fill(); x.lineWidth = 3; x.strokeStyle = '#2a1c20'; x.stroke();
+      rr(x, 66, 32, 72, 10, 3); x.fillStyle = '#3e5a6e'; x.fill();
+      rr(x, 128, 12, 28, 28, 5); x.fillStyle = '#c04a40'; x.fill(); x.lineWidth = 2.8; x.strokeStyle = '#2a1c20'; x.stroke();
+      x.fillStyle = '#2a1c20'; x.fillRect(128, 20, 28, 7);
+      // 甲板集装箱（两叠）
+      const cc = ['#c05a52', '#4a7ab5', '#3f9aa8', '#c9883a', '#4f8f5e'];
+      for (let i = 0; i < 7; i++) {
+        rr(x, 186 + i * 32, 44, 30, 18, 3); x.fillStyle = cc[i % 5]; x.fill();
+        x.lineWidth = 2; x.strokeStyle = '#2a1c20'; x.stroke();
+      }
+      rr(x, 202, 26, 30, 16, 3); x.fillStyle = cc[3]; x.fill(); x.lineWidth = 2; x.strokeStyle = '#2a1c20'; x.stroke();
+      rr(x, 298, 26, 30, 16, 3); x.fillStyle = cc[1]; x.fill(); x.stroke();
+      // 桅杆 + 船旗
+      x.strokeStyle = '#2a1c20'; x.lineWidth = 2.6; x.beginPath(); x.moveTo(420, 62); x.lineTo(420, 26); x.stroke();
+      x.fillStyle = '#ff8f9f'; x.beginPath(); x.moveTo(420, 26); x.lineTo(438, 31); x.lineTo(420, 36); x.closePath(); x.fill();
+    });
+    /* 储油罐（油罐区） */
+    S.oilTank = bake2(180, 140, x => {
+      shadow(x, 90, 132, 64, 8);
+      rr(x, 20, 34, 140, 98, 9); x.fillStyle = '#cdd6de'; x.fill();
+      rr(x, 20, 98, 140, 34, 8); x.fillStyle = 'rgba(0,0,0,.14)'; x.fill();
+      x.lineWidth = 3.4; x.strokeStyle = '#454a56'; x.stroke();
+      ell(x, 90, 36, 70, 17, '#dfe6ec', '#454a56', 3.2);
+      rr(x, 62, 12, 13, 18, 3); x.fillStyle = '#8a93a0'; x.fill(); x.lineWidth = 2.4; x.strokeStyle = '#454a56'; x.stroke();
+      // 环向拼缝 + 警示环带
+      x.strokeStyle = 'rgba(69,74,86,.45)'; x.lineWidth = 2;
+      x.beginPath(); x.moveTo(24, 64); x.lineTo(156, 64); x.moveTo(24, 88); x.lineTo(156, 88); x.stroke();
+      x.fillStyle = '#e0a83c'; x.fillRect(24, 74, 132, 9);
+      // 盘梯
+      x.strokeStyle = '#454a56'; x.lineWidth = 3;
+      x.beginPath(); x.moveTo(158, 130); x.lineTo(172, 130); x.lineTo(172, 42); x.lineTo(148, 34); x.stroke();
+      x.strokeStyle = 'rgba(69,74,86,.6)'; x.lineWidth = 2;
+      x.beginPath();
+      for (let ty = 46; ty < 128; ty += 12) { x.moveTo(166, ty); x.lineTo(176, ty); }
+      x.stroke();
+    });
+    /* 雪顶凉亭（雪山庭园地标） */
+    S.snowPavilion = bake2(210, 180, x => {
+      shadow(x, 105, 172, 68, 8);
+      for (const px of [44, 105, 166]) {
+        rr(x, px - 8, 84, 16, 84, 4); x.fillStyle = '#7a7488'; x.fill();
+        x.lineWidth = 2.8; x.strokeStyle = '#453244'; x.stroke();
+      }
+      rr(x, 26, 160, 158, 13, 5); x.fillStyle = '#8a84a0'; x.fill(); x.lineWidth = 2.8; x.strokeStyle = '#453244'; x.stroke();
+      // 攒尖顶
+      x.beginPath(); x.moveTo(105, 12); x.quadraticCurveTo(176, 56, 192, 98); x.lineTo(18, 98); x.quadraticCurveTo(34, 56, 105, 12); x.closePath();
+      x.fillStyle = '#5d4a5e'; x.fill(); x.lineWidth = 3.4; x.strokeStyle = '#3a2c3e'; x.stroke();
+      // 顶面积雪
+      x.beginPath(); x.moveTo(105, 12); x.quadraticCurveTo(152, 34, 172, 66); x.quadraticCurveTo(128, 52, 105, 56); x.quadraticCurveTo(82, 52, 38, 66); x.quadraticCurveTo(58, 34, 105, 12); x.closePath();
+      x.fillStyle = 'rgba(244,248,252,.95)'; x.fill();
+      // 宝顶 + 风铃
+      circ(x, 105, 12, 7, '#e8b45c', '#a8782e', 2.4);
+      for (const px of [58, 152]) {
+        x.strokeStyle = '#453244'; x.lineWidth = 2; x.beginPath(); x.moveTo(px, 98); x.lineTo(px, 112); x.stroke();
+        ell(x, px, 117, 5, 6, '#e8b45c', '#a8782e', 2);
+      }
+    });
+    /* 马戏团主帐篷（游乐园地标大帐篷） */
+    S.bigTop = bake2(360, 290, x => {
+      shadow(x, 180, 280, 132, 11);
+      // 主体验（放射条纹大锥顶）
+      x.beginPath(); x.moveTo(180, 16);
+      x.quadraticCurveTo(296, 66, 320, 196); x.quadraticCurveTo(330, 244, 314, 254);
+      x.quadraticCurveTo(180, 278, 46, 254); x.quadraticCurveTo(30, 244, 40, 196);
+      x.quadraticCurveTo(64, 66, 180, 16); x.closePath();
+      x.fillStyle = '#b8444e'; x.fill(); x.lineWidth = 4; x.strokeStyle = '#2c1c2e'; x.stroke();
+      x.save(); x.clip();
+      x.fillStyle = '#f2e8d8';
+      for (let i = 0; i < 4; i++) {
+        const bx = 66 + i * 64;
+        x.beginPath(); x.moveTo(180, 16); x.lineTo(bx + 16, 272); x.lineTo(bx - 16, 272); x.closePath(); x.fill();
+      }
+      // 底口阴影
+      x.fillStyle = 'rgba(0,0,0,.12)'; x.fillRect(30, 238, 300, 40);
+      x.restore();
+      // 底边扇贝
+      x.fillStyle = '#8a2e3a';
+      for (let i = 0; i < 7; i++) {
+        x.beginPath(); x.arc(64 + i * 39, 258, 12, 0, Math.PI); x.fill();
+      }
+      // 入口
+      x.beginPath(); x.moveTo(154, 270); x.lineTo(160, 200); x.quadraticCurveTo(180, 186, 200, 200); x.lineTo(206, 270); x.closePath();
+      x.fillStyle = '#241a26'; x.fill(); x.lineWidth = 3; x.strokeStyle = '#2c1c2e'; x.stroke();
+      // 尖顶旗
+      x.strokeStyle = '#2c1c2e'; x.lineWidth = 3.4; x.beginPath(); x.moveTo(180, 16); x.lineTo(180, 4); x.stroke();
+      x.fillStyle = '#ffd34d'; x.beginPath(); x.moveTo(180, 2); x.lineTo(206, 9); x.lineTo(180, 16); x.closePath(); x.fill();
+      x.lineWidth = 2; x.strokeStyle = '#a8782e'; x.stroke();
+      // 门口挂灯
+      for (const lx of [136, 224]) circ(x, lx, 214, 4, '#ffe9a8', '#a8782e', 1.6);
+    });
+    /* ---- 意见2第二轮小件精灵 ---- */
+    /* 叉车（堆场作业车） */
+    S.forklift = bake2(96, 78, x => {
+      shadow(x, 48, 70, 34, 6);
+      // 货叉 + 门架
+      x.fillStyle = '#3a4252'; x.fillRect(6, 30, 22, 6); x.fillRect(6, 44, 22, 6);
+      x.strokeStyle = '#2c3340'; x.lineWidth = 5;
+      x.beginPath(); x.moveTo(28, 16); x.lineTo(28, 60); x.moveTo(38, 16); x.lineTo(38, 60); x.stroke();
+      // 车身
+      rr(x, 36, 24, 46, 38, 7); x.fillStyle = '#e8a83c'; x.fill();
+      rr(x, 36, 46, 46, 16, 5); x.fillStyle = 'rgba(0,0,0,.18)'; x.fill();
+      x.lineWidth = 3.2; x.strokeStyle = '#211b2c'; x.stroke();
+      // 驾驶棚
+      rr(x, 60, 8, 24, 22, 5); x.fillStyle = '#4a5568'; x.fill(); x.lineWidth = 2.8; x.strokeStyle = '#211b2c'; x.stroke();
+      // 车轮
+      for (const [wx, wy] of [[46, 62], [72, 62]]) circ(x, wx, wy, 7, '#2c2f3e', '#171a26', 2.4);
+    });
+    /* 集装箱拖挂车（堆场巷道作业） */
+    S.contTruck = bake2(300, 116, x => {
+      shadow(x, 150, 108, 118, 7);
+      // 底盘
+      rr(x, 14, 60, 268, 16, 4); x.fillStyle = '#33394a'; x.fill(); x.lineWidth = 3; x.strokeStyle = '#211b2c'; x.stroke();
+      // 车载集装箱
+      rr(x, 24, 14, 190, 50, 5); x.fillStyle = '#4a7ab5'; x.fill();
+      x.save(); rr(x, 24, 14, 190, 50, 5); x.clip();
+      x.strokeStyle = 'rgba(255,255,255,.22)'; x.lineWidth = 3;
+      for (let i = 0; i < 12; i++) { x.beginPath(); x.moveTo(32 + i * 15, 16); x.lineTo(32 + i * 15, 62); x.stroke(); }
+      x.restore();
+      rr(x, 24, 14, 190, 50, 5); x.lineWidth = 3.2; x.strokeStyle = '#211b2c'; x.stroke();
+      // 车头
+      rr(x, 232, 24, 54, 54, 8); x.fillStyle = '#c05a52'; x.fill();
+      rr(x, 240, 30, 30, 22, 5); x.fillStyle = '#a8c4dc'; x.fill(); x.lineWidth = 2.6; x.strokeStyle = '#211b2c'; x.stroke();
+      rr(x, 232, 60, 54, 18, 5); x.fillStyle = 'rgba(0,0,0,.18)'; x.fill();
+      rr(x, 232, 24, 54, 54, 8); x.lineWidth = 3.2; x.strokeStyle = '#211b2c'; x.stroke();
+      for (const wx of [58, 96, 134, 258]) { circ(x, wx, 82, 9, '#2c2f3e', '#171a26', 2.4); }
+    });
+    /* 雪人 */
+    S.snowman = bake2(60, 74, x => {
+      shadow(x, 30, 68, 22, 5);
+      circ(x, 30, 48, 17, '#f6fafd', '#9db4d0', 3);
+      circ(x, 30, 24, 12, '#f6fafd', '#9db4d0', 3);
+      circ(x, 26, 21, 1.8, '#211b2c'); circ(x, 34, 21, 1.8, '#211b2c');
+      x.fillStyle = '#e0864c'; x.beginPath(); x.moveTo(30, 24); x.lineTo(40, 27); x.lineTo(30, 29); x.closePath(); x.fill();
+      // 红围巾 + 桶帽
+      rr(x, 20, 33, 20, 6, 3); x.fillStyle = '#c94a5a'; x.fill(); x.lineWidth = 2; x.strokeStyle = '#7e2a36'; x.stroke();
+      rr(x, 21, 8, 18, 10, 2); x.fillStyle = '#3a4252'; x.fill(); x.lineWidth = 2.2; x.strokeStyle = '#211b2c'; x.stroke();
+      rr(x, 17, 16, 26, 4, 2); x.fill(); x.stroke();
+      // 树枝手
+      x.strokeStyle = '#7a5c3e'; x.lineWidth = 3;
+      x.beginPath(); x.moveTo(14, 40); x.lineTo(2, 32); x.moveTo(46, 40); x.lineTo(58, 32); x.stroke();
+    });
+    /* 晒衣架（温泉村） */
+    S.laundry = bake2(150, 86, x => {
+      shadow(x, 75, 80, 52, 5);
+      for (const px of [18, 132]) {
+        rr(x, px - 4, 14, 8, 66, 3); x.fillStyle = '#7a5c3e'; x.fill();
+        x.lineWidth = 2.4; x.strokeStyle = '#54402c'; x.stroke();
+        rr(x, px - 14, 10, 28, 6, 3); x.fill(); x.stroke();
+      }
+      x.strokeStyle = '#8a7460'; x.lineWidth = 2.4;
+      x.beginPath(); x.moveTo(18, 22); x.quadraticCurveTo(75, 34, 132, 22); x.stroke();
+      // 挂着的衣物
+      const cloth = [['#ff9dc3', 38], ['#7de3e0', 66], ['#fff2d8', 94]];
+      for (const [c, cxx] of cloth) {
+        rr(x, cxx - 9, 24, 18, 26, 4); x.fillStyle = c; x.fill();
+        x.lineWidth = 2.2; x.strokeStyle = 'rgba(60,40,70,.5)'; x.stroke();
+      }
+    });
+    /* 电话亭 */
+    S.phoneBooth = bake2(52, 88, x => {
+      shadow(x, 26, 82, 18, 5);
+      rr(x, 8, 8, 36, 74, 6); x.fillStyle = '#c94a5a'; x.fill();
+      rr(x, 13, 16, 26, 44, 3); x.fillStyle = '#a8d8e8'; x.fill();
+      x.strokeStyle = 'rgba(255,255,255,.55)'; x.lineWidth = 2.4;
+      x.beginPath(); x.moveTo(17, 20); x.lineTo(17, 56); x.stroke();
+      rr(x, 8, 8, 36, 74, 6); x.lineWidth = 3.2; x.strokeStyle = '#211b2c'; x.stroke();
+      rr(x, 4, 2, 44, 10, 4); x.fillStyle = '#a83a48'; x.fill(); x.lineWidth = 2.6; x.stroke();
+      rr(x, 12, 66, 28, 12, 3); x.fillStyle = '#8f2f3c'; x.fill(); x.lineWidth = 2; x.stroke();
+    });
+    /* 公交站牌 */
+    S.busStop = bake2(64, 96, x => {
+      shadow(x, 24, 90, 16, 4.5);
+      rr(x, 20, 8, 8, 84, 3); x.fillStyle = '#4a5568'; x.fill();
+      x.lineWidth = 2.4; x.strokeStyle = '#211b2c'; x.stroke();
+      rr(x, 4, 4, 56, 30, 6); x.fillStyle = '#f2ead2'; x.fill();
+      x.lineWidth = 2.8; x.strokeStyle = '#211b2c'; x.stroke();
+      x.fillStyle = '#4a7ab5';
+      for (let i = 0; i < 3; i++) rr(x, 10 + i * 17, 10, 11, 7, 2), x.fill();
+      rr(x, 10, 22, 44, 6, 2); x.fillStyle = '#c9cdd8'; x.fill();
+      circ(x, 24, 60, 5, '#4fb3b0', '#211b2c', 2);
+    });
+    /* 售票亭（游乐园） */
+    S.ticket = bake2(72, 92, x => {
+      shadow(x, 36, 86, 26, 5);
+      rr(x, 12, 30, 48, 56, 6); x.fillStyle = '#e8b45c'; x.fill();
+      rr(x, 12, 62, 48, 24, 4); x.fillStyle = 'rgba(0,0,0,.18)'; x.fill();
+      x.lineWidth = 3.2; x.strokeStyle = '#211b2c'; x.stroke();
+      rr(x, 20, 40, 32, 20, 4); x.fillStyle = '#3a2c3e'; x.fill(); x.lineWidth = 2.4; x.stroke();
+      x.fillStyle = '#ffd34d'; x.font = '900 14px sans-serif'; x.textAlign = 'center'; x.fillText('券', 36, 55);
+      // 尖顶小檐
+      x.beginPath(); x.moveTo(36, 4); x.lineTo(64, 32); x.lineTo(8, 32); x.closePath();
+      x.fillStyle = '#c94a5a'; x.fill(); x.lineWidth = 3; x.strokeStyle = '#211b2c'; x.stroke();
+      x.fillStyle = 'rgba(255,255,255,.2)';
+      x.beginPath(); x.moveTo(36, 4); x.lineTo(50, 32); x.lineTo(36, 32); x.closePath(); x.fill();
+    });
     S.ready = true;
     // 合并通用城市家具（art.js 的 decor 也可作为装饰精灵使用）
     Object.assign(S, Art.decor);
@@ -2698,6 +3461,16 @@ const MAPS = (() => {
         x.strokeStyle = 'rgba(10,22,40,.5)'; x.lineWidth = 10;
         rr(x, op.x + 15, op.y + 15, Math.max(6, op.w - 30), Math.max(6, op.h - 30), 12); x.stroke();
         specks(x, op, 2200, ['rgba(190,225,255,.14)'], 3);
+        // 意见2第二轮：大水面游两尾锦鲤（ deterministic，烘焙进地砖）
+        if (op.w * op.h > 60000) {
+          for (let i = 0; i < 2; i++) {
+            const kx = op.x + (0.28 + hs(op, 6, i) * 0.44) * op.w, ky = op.y + (0.3 + hs(op, 7, i) * 0.4) * op.h;
+            x.save(); x.translate(kx, ky); x.rotate(hs(op, 8, i) * U.TAU);
+            ell(x, 0, 0, 10, 5, i % 2 ? '#ff8f5a' : '#fff2e0');
+            x.beginPath(); x.moveTo(-9, 0); x.lineTo(-15, -4.4); x.lineTo(-15, 4.4); x.closePath(); x.fill();
+            x.restore();
+          }
+        }
         break;
       case 'ice':
         fillGrad(x, op, '#b9d4ea', '#a9c6e2');
@@ -2732,6 +3505,26 @@ const MAPS = (() => {
           const px = along ? op.x + t * len : op.x + op.w / 2 + off;
           const py = along ? op.y + op.h / 2 + off : op.y + t * len;
           paw(x, px, py, along ? 0 : Math.PI / 2, 'rgba(255,200,220,.5)');
+        }
+        break;
+      }
+      case 'bridge': {
+        // 石桥面：石板 + 两侧矮护栏（贴地装饰，桥面可通行）
+        fillGrad(x, op, '#7a7488', '#6e6880');
+        const vert = op.h > op.w;
+        x.strokeStyle = 'rgba(30,26,40,.5)'; x.lineWidth = 2;
+        x.beginPath();
+        if (vert) for (let gy = 18; gy < op.h; gy += 18) { x.moveTo(op.x, op.y + gy); x.lineTo(op.x + op.w, op.y + gy); }
+        else for (let gx = 18; gx < op.w; gx += 18) { x.moveTo(op.x + gx, op.y); x.lineTo(op.x + gx, op.y + op.h); }
+        x.stroke();
+        x.fillStyle = '#8a84a0'; x.strokeStyle = '#453244'; x.lineWidth = 2.4;
+        const bw = 10;
+        if (vert) {
+          rr(x, op.x, op.y, bw, op.h, 4); x.fill(); x.stroke();
+          rr(x, op.x + op.w - bw, op.y, bw, op.h, 4); x.fill(); x.stroke();
+        } else {
+          rr(x, op.x, op.y, op.w, bw, 4); x.fill(); x.stroke();
+          rr(x, op.x, op.y + op.h - bw, op.w, bw, 4); x.fill(); x.stroke();
         }
         break;
       }
@@ -2872,6 +3665,104 @@ const MAPS = (() => {
         }
         break;
       }
+      /* ---- 地面细节层（意见2第二轮）：只画细节不铺底色，可叠在任意地面上 ---- */
+      case 'petals': // 落樱/花瓣地毯
+      case 'leafpile': { // 落叶堆
+        const pal = op.k === 'petals'
+          ? ['rgba(255,196,220,.8)', 'rgba(255,224,238,.85)', 'rgba(240,154,184,.7)', 'rgba(255,255,255,.75)']
+          : ['rgba(190,110,60,.75)', 'rgba(160,90,45,.75)', 'rgba(220,150,80,.65)', 'rgba(120,80,40,.6)'];
+        const n = Math.round(op.w * op.h / 240);
+        for (let i = 0; i < n; i++) {
+          x.save(); x.translate(op.x + hs(op, 1, i) * op.w, op.y + hs(op, 2, i) * op.h);
+          x.rotate(hs(op, 3, i) * U.TAU);
+          ell(x, 0, 0, 4.6, 2.6, pal[(hs(op, 4, i) * pal.length) | 0]);
+          x.restore();
+        }
+        break;
+      }
+      case 'snowdrift': { // 雪堆：亮面 + 背风暗面
+        ell(x, op.x + op.w / 2, op.y + op.h / 2 + 3, op.w / 2, op.h / 2, 'rgba(150,170,205,.4)');
+        ell(x, op.x + op.w / 2, op.y + op.h / 2 - 2, op.w / 2 - 3, op.h / 2 - 3, 'rgba(255,255,255,.92)');
+        ell(x, op.x + op.w * 0.36, op.y + op.h * 0.3, op.w * 0.2, op.h * 0.16, 'rgba(255,255,255,.95)');
+        break;
+      }
+      case 'footprint': { // 雪地脚印/爪印小径（两列交错）
+        const n2 = Math.max(3, Math.round(op.h / 22));
+        for (let i = 0; i < n2; i++) {
+          const t2 = i / n2, side = i % 2 ? 1 : -1;
+          const px = op.x + op.w / 2 + side * op.w * 0.22 + (hs(op, 1, i) - 0.5) * 4;
+          const py = op.y + t2 * op.h + 6;
+          ell(x, px, py, 3.4, 5, 'rgba(120,140,180,.55)');
+        }
+        break;
+      }
+      case 'oil': { // 油渍
+        ell(x, op.x + op.w / 2, op.y + op.h / 2, op.w / 2, op.h / 2, 'rgba(20,22,34,.28)');
+        ell(x, op.x + op.w * 0.42, op.y + op.h * 0.46, op.w * 0.26, op.h * 0.24, 'rgba(12,14,24,.34)');
+        ell(x, op.x + op.w * 0.62, op.y + op.h * 0.6, op.w * 0.14, op.h * 0.12, 'rgba(255,255,255,.08)');
+        break;
+      }
+      case 'tire': { // 轮胎印（双弧）
+        x.strokeStyle = 'rgba(22,24,36,.4)'; x.lineWidth = 6;
+        x.beginPath();
+        x.moveTo(op.x, op.y + op.h * 0.3);
+        x.quadraticCurveTo(op.x + op.w / 2, op.y + op.h * (0.3 + hs(op, 1, 1) * 0.5), op.x + op.w, op.y + op.h * 0.4);
+        x.moveTo(op.x, op.y + op.h * 0.72);
+        x.quadraticCurveTo(op.x + op.w / 2, op.y + op.h * (0.72 + hs(op, 2, 1) * 0.4), op.x + op.w, op.y + op.h * 0.8);
+        x.stroke();
+        break;
+      }
+      case 'grate': { // 排水格栅
+        rr(x, op.x, op.y, op.w, op.h, 4); x.fillStyle = 'rgba(28,30,46,.8)'; x.fill();
+        x.strokeStyle = 'rgba(120,126,150,.5)'; x.lineWidth = 2.4;
+        x.beginPath();
+        const vert = op.h > op.w;
+        if (vert) for (let gy = 4; gy < op.h - 3; gy += 7) { x.moveTo(op.x + 3, op.y + gy); x.lineTo(op.x + op.w - 3, op.y + gy); }
+        else for (let gx = 4; gx < op.w - 3; gx += 7) { x.moveTo(op.x + gx, op.y + 3); x.lineTo(op.x + gx, op.y + op.h - 3); }
+        x.stroke();
+        break;
+      }
+      case 'chalk': { // 游乐园地面彩绘（粉笔圆圈/彩点/箭头）
+        const cols = ['rgba(255,157,195,.5)', 'rgba(125,227,224,.5)', 'rgba(255,211,77,.5)', 'rgba(201,167,255,.5)'];
+        x.strokeStyle = cols[(hs(op, 1, 1) * 4) | 0]; x.lineWidth = 4;
+        x.beginPath(); x.ellipse(op.x + op.w / 2, op.y + op.h / 2, op.w * 0.32, op.h * 0.32, hs(op, 2, 1), 0, U.TAU); x.stroke();
+        for (let i = 0; i < 6; i++) {
+          x.fillStyle = cols[(hs(op, 3, i) * 4) | 0];
+          circ(x, op.x + hs(op, 4, i) * op.w, op.y + hs(op, 5, i) * op.h, 3.4, x.fillStyle);
+        }
+        break;
+      }
+      case 'crack': { // 地面裂缝
+        x.strokeStyle = 'rgba(20,16,30,.4)'; x.lineWidth = 3;
+        x.beginPath();
+        let cx2 = op.x + op.w * 0.2, cy2 = op.y + op.h * 0.3;
+        x.moveTo(cx2, cy2);
+        for (let i = 0; i < 4; i++) {
+          cx2 += (hs(op, 1, i) - 0.3) * op.w * 0.3; cy2 += (hs(op, 2, i) - 0.4) * op.h * 0.3;
+          x.lineTo(cx2, cy2);
+        }
+        x.stroke();
+        break;
+      }
+      case 'koi': { // 锦鲤（水面上）
+        for (let i = 0; i < 3; i++) {
+          const kx = op.x + (0.2 + hs(op, 1, i) * 0.6) * op.w, ky = op.y + (0.25 + hs(op, 2, i) * 0.5) * op.h;
+          x.save(); x.translate(kx, ky); x.rotate(hs(op, 3, i) * U.TAU);
+          ell(x, 0, 0, 9, 4.6, i % 2 ? '#ff8f5a' : '#fff2e0');
+          x.beginPath(); x.moveTo(-8, 0); x.lineTo(-14, -4); x.lineTo(-14, 4); x.closePath(); x.fill();
+          circ(x, 6, -1, 1.4, 'rgba(60,30,20,.6)');
+          x.restore();
+        }
+        break;
+      }
+      case 'rope': { // 系船缆绳（下垂弧线）
+        x.strokeStyle = 'rgba(90,74,54,.75)'; x.lineWidth = 3.4;
+        x.beginPath();
+        x.moveTo(op.x, op.y + op.h * 0.3);
+        x.quadraticCurveTo(op.x + op.w / 2, op.y + op.h, op.x + op.w, op.y + op.h * 0.3);
+        x.stroke();
+        break;
+      }
       case 'spr': {
         const s = typeof op.spr === 'string' ? S[op.spr] : op.spr;
         if (!s) break;
@@ -2897,7 +3788,9 @@ const MAPS = (() => {
     const roof = b.roof;
     // 主体
     rr(x, bx, by, w, h, 9);
-    x.fillStyle = lg(x, bx, by, bx, by + h, [[0, roof], [1, 'rgba(0,0,0,.20)']]); x.fill();
+    // 2 阶扁平（像素规范）：主体平涂 + 底部 1/4 暗带，不用渐变
+    x.fillStyle = roof; x.fill();
+    rr(x, bx, by + h * 0.72, w, h * 0.28 + 2, 4); x.fillStyle = 'rgba(0,0,0,.18)'; x.fill();
     x.lineWidth = 3.6; x.strokeStyle = '#211b2c'; x.stroke();
     rr(x, bx + 5, by + 5, w - 10, h - 10, 7);
     x.strokeStyle = 'rgba(255,255,255,.13)'; x.lineWidth = 2; x.stroke();
@@ -2934,6 +3827,16 @@ const MAPS = (() => {
         x.moveTo(bx + t, by); x.lineTo(bx + Math.max(0, t - h), by + Math.min(h, t));
       }
       x.stroke();
+      // 意见2第二轮：瓦垄横线 + 檐口/脊面积雪（旅馆屋顶不再是灰矩形）
+      x.strokeStyle = 'rgba(0,0,0,.16)'; x.lineWidth = 2;
+      x.beginPath();
+      for (let ty2 = 15; ty2 < h - 6; ty2 += 13) { x.moveTo(bx + 3, by + ty2); x.lineTo(bx + w - 3, by + ty2); }
+      x.stroke();
+      x.fillStyle = 'rgba(244,248,252,.95)';
+      rr(x, bx + 2, by + 2, w - 4, 8, 4); x.fill();
+      for (let i = 0; i < 4; i++) {
+        ell(x, bx + 12 + R(6, i) * (w - 24), by + 12 + R(7, i) * Math.max(10, h * 0.42), 10 + R(8, i) * 12, 4.6, 'rgba(244,248,252,.88)');
+      }
       x.restore();
       x.strokeStyle = '#211b2c'; x.lineWidth = 4;
       x.beginPath(); x.moveTo(bx, by); x.lineTo(bx + w / 2, by + h / 2); x.lineTo(bx + w, by); x.stroke();
@@ -3021,6 +3924,22 @@ const MAPS = (() => {
     fill(k, x, y, w, h, extra) { const op = Object.assign({ k, x, y, w, h }, extra); this.ops.push(op); return op; }
     block(k, x, y, w, h, extra) { this.stamp(x, y, w, h, T.BLOCK); return this.fill(k, x, y, w, h, extra); }
     slow(k, x, y, w, h, extra) { this.stamp(x, y, w, h, T.SLOW); return this.fill(k, x, y, w, h, extra); }
+    /* ---- 地面细节层撒布器（意见2第二轮）：把覆盖式小 op 用哈希抖动批量铺进区域，
+       全部烘焙进地砖，运行时零开销。需在该区域的遮挡物盖章之前调用（细节垫底） ---- */
+    scatter(k, x0, y0, x1, y1, gap, sz) {
+      for (let y = y0; y <= y1; y += gap) for (let x = x0; x <= x1; x += gap) {
+        const jx = (U.hash2(x, y, 43) - 0.5) * gap * 0.6, jy = (U.hash2(y, x, 44) - 0.5) * gap * 0.6;
+        this.fill(k, x + jx, y + jy, sz, sz * (0.55 + U.hash2(x, y, 45) * 0.8));
+      }
+    }
+    flatScatter(key, x0, y0, x1, y1, gap, fw, fh) { // 贴地小件（井盖/水洼/落叶堆贴图）成片撒布
+      for (let y = y0; y <= y1; y += gap) for (let x = x0; x <= x1; x += gap) {
+        const h2 = U.hash2(x, y, 46);
+        if (h2 < 0.35) continue; // 疏密不均
+        const jx = (U.hash2(x, y, 47) - 0.5) * gap * 0.7, jy = (U.hash2(y, x, 48) - 0.5) * gap * 0.7;
+        this.flat(key, x + jx, y + jy, fw, fh);
+      }
+    }
     cat(x, y, w, h, extra) { this.stamp(x, y, w, h, T.CAT); return this.fill('cat', x, y, w, h, Object.assign({ c: this.meta.catGround, c2: this.meta.catGround2 }, extra)); }
     water(x, y, w, h) { this.stamp(x, y, w, h, T.BLOCK); this.waterR.push({ x, y, w, h }); return this.fill('water', x, y, w, h); }
     onsen(x, y, w, h) { // 温泉池：水面 + 石沿 + 蒸汽
@@ -3043,9 +3962,12 @@ const MAPS = (() => {
     spr(key, x, y, o) {
       o = o || {};
       this.decor.push({ spr: key, x, y, sx: o.sx || 1, sy: o.sy || 1, alpha: o.alpha || 1 });
-      if (o.solid) this.stampCirc(x, y, o.solid === true ? 26 : o.solid, T.BLOCK);
+      // 修复:隐形墙——新增 solidRect(按精灵视觉占地盖矩形)与 solidOy(阻挡圆心沿脚底基线上移)，
+      // 让碰撞贴住贴图：宽扁物件(车/摊/帐篷)不再向南伸出一片看不见的阻挡
+      if (o.solidRect) this.stamp(x - o.solidRect[0] / 2, y + 6 - (o.solidOy || 0) - o.solidRect[1], o.solidRect[0], o.solidRect[1], T.BLOCK);
+      if (o.solid) this.stampCirc(x, y - (o.solidOy || 0), o.solid === true ? 26 : o.solid, T.BLOCK);
       // 双柱阻挡（鸟居等门形装饰）：只在两根柱上放圆，门中央保持可穿行
-      if (o.pillars) { const pr = o.pr || 16; this.stampCirc(x - o.pillars, y, pr, T.BLOCK); this.stampCirc(x + o.pillars, y, pr, T.BLOCK); }
+      if (o.pillars) { const pr = o.pr || 16, poy = o.solidOy || 0; this.stampCirc(x - o.pillars, y - poy, pr, T.BLOCK); this.stampCirc(x + o.pillars, y - poy, pr, T.BLOCK); }
     }
     lamp(x, y, glow) { this.lamps.push({ x, y, g: glow || 'lamp' }); }
     flat(key, x, y, w, h, extra) { this.ops.push(Object.assign({ k: 'spr', spr: S[key] || key, x, y, w, h }, extra)); }
@@ -3101,9 +4023,12 @@ const MAPS = (() => {
       const key = tx * 4096 + ty;
       let c = this.tiles.get(key);
       if (c) return c;
+      const PIX = 4; // 像素化：地形 1/4 分辨率烘焙，绘制时最近邻拉伸
       c = document.createElement('canvas');
-      c.width = TILE; c.height = TILE;
+      c.width = TILE / PIX; c.height = TILE / PIX;
       const x = c.getContext('2d');
+      x.imageSmoothingEnabled = false;
+      x.scale(1 / PIX, 1 / PIX);
       x.save();
       x.beginPath(); x.rect(0, 0, TILE, TILE); x.clip(); // 画布自身坐标（先裁剪再平移到世界）
       x.translate(-tx * TILE, -ty * TILE);
@@ -3130,23 +4055,34 @@ const MAPS = (() => {
       const ty1 = Math.min(Math.ceil(this.h / TILE) - 1, Math.floor(B2 / TILE));
       // 世界变换为「相对坐标」：绘制需减去相机（与 w2sx/w2sy 同一套约定）
       const ox = camX === undefined ? 0 : camX, oy = camY === undefined ? 0 : camY;
-      for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) ctx.drawImage(this.tile(tx, ty), tx * TILE - ox, ty * TILE - oy);
+      for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) ctx.drawImage(this.tile(tx, ty), tx * TILE - ox, ty * TILE - oy, TILE, TILE);
     }
     drawDecor(ctx, L, Tp, R2, B2, w2sx, w2sy) {
       for (const d of this.decor) {
         if (d.y < Tp - 320) continue;
         if (d.y > B2 + 80) break; // 已按 y 排序
         if (d.x < L - 220 || d.x > R2 + 220) continue;
-        const s = typeof d.spr === 'string' ? S[d.spr] : d.spr;
+        let s = typeof d.spr === 'string' ? S[d.spr] : d.spr;
         if (!s) continue;
-        const w2 = s.width / 2, h2 = s.height;
+        // 像素化：1/3 降采样缓存（每精灵一次），再最近邻拉伸回原尺寸
+        if (!s.__pix || s.__pixK !== 3) {
+          const t = document.createElement('canvas');
+          t.width = Math.max(2, Math.round(s.width / 3)); t.height = Math.max(2, Math.round(s.height / 3));
+          const tc = t.getContext('2d');
+          tc.imageSmoothingEnabled = true;
+          tc.drawImage(s, 0, 0, t.width, t.height);
+          s.__pix = t; s.__pixK = 3;
+        }
+        s = s.__pix;
+        const w2 = s.width * 3 / 2, h2 = s.height * 3 / 2;
         ctx.save();
         ctx.globalAlpha = d.alpha;
+        const dw = w2, dh = h2; // 精灵已 1/3 化：×3 恢复世界尺寸，再 ÷2 对齐 2x 烘焙基准
         if (d.sx !== 1 || d.sy !== 1) {
           ctx.translate(w2sx(d.x), w2sy(d.y));
           ctx.scale(d.sx, d.sy);
-          ctx.drawImage(s, -w2, -h2 + 6);
-        } else ctx.drawImage(s, w2sx(d.x) - w2, w2sy(d.y) - h2 + 6);
+          ctx.drawImage(s, -dw / 2, -dh + 6);
+        } else ctx.drawImage(s, w2sx(d.x) - dw / 2, w2sy(d.y) - dh + 6);
         ctx.restore();
       }
     }
@@ -3225,8 +4161,8 @@ const MAPS = (() => {
   function oldtown() {
     const m = new MB({
       id: 'oldtown', name: '老城夜市', emoji: '🌃',
-      desc: '街区路网 · 夜市大街 · 中央公园',
-      w: 4800, h: 3600, start: { x: 2400, y: 2325 },
+      desc: '街区路网 · 夜市大街 · 钟楼广场',
+      w: 7100, h: 5400, start: { x: 2400, y: 2325 },
       base: '#333754', catGround: '#3a3244', catGround2: '#332c3d',
       roofs: ['#6a7694', '#8a6a76', '#7a6c92', '#6a8a7e', '#8f7d64'],
       pv: { 0: '#3d4266', 1: '#23202f', 2: '#31584a', 3: '#d9a441' }
@@ -3234,10 +4170,17 @@ const MAPS = (() => {
     const bld = (...a) => m.bld(...a);
     // 基础沥青 + 路网（街道宽度不一、间距不均，像真实老城）
     m.fill('asphalt', 0, 0, m.w, m.h);
-    const H = [[500, 130], [1330, 110], [2250, 150], [3130, 110]];
-    const V = [[540, 120], [1580, 110], [2640, 130], [3680, 120], [4380, 100]];
+    // 意见2第二轮：再放大一档 → 南增两条横街、东增两条纵街，新街区按密度标准填满
+    const H = [[500, 130], [1330, 110], [2250, 150], [3130, 110], [3540, 140], [4110, 130], [4800, 140]];
+    const V = [[540, 120], [1580, 110], [2640, 130], [3680, 120], [4380, 100], [5150, 120], [6250, 120]];
     for (const [y, h2] of H) m.fill('road', 0, y, m.w, h2);
     for (const [x, w2] of V) m.fill('road', x, 0, w2, m.h);
+    // 地面细节层先垫底（油渍/轮胎印/排水格栅/井盖/水洼，显形在露出的街道上，被街区的地面盖住）
+    m.scatter('oil', 120, 120, 6980, 5280, 480, 120);
+    m.scatter('tire', 120, 120, 6980, 5280, 660, 100);
+    m.scatter('grate', 140, 140, 6960, 5260, 800, 46);
+    m.flatScatter('manhole', 400, 400, 6800, 5100, 560, 44, 44);
+    m.flatScatter('puddle', 300, 300, 6900, 5200, 700, 90, 50);
     // 小巷
     m.fill('road', 1120, 630, 50, 700);    // A1 竖巷
     m.fill('road', 1690, 1970, 950, 50);   // A2 横巷
@@ -3251,22 +4194,22 @@ const MAPS = (() => {
     walk(60, 60, 480, 440);
     bld('apt', 100, 100, 200, 170, { pad: false });
     bld('house', 340, 300, 170, 130, { pad: false });
-    m.spr('tree', 160, 380, { solid: 20 });
+    m.spr('tree', 160, 380, { solid: 20, solidOy: 12 }); // 修复:行道树碰撞贴树干
     m.flat('puddle', 360, 130, 90, 50);
     // C2R1 商店排
     walk(660, 60, 920, 440);
     bld('shop', 700, 100, 240, 170, { pad: false, awn: '#e0678f' });
     bld('shop', 990, 100, 220, 170, { pad: false, awn: '#4fb3b0' });
     bld('shop', 1260, 100, 220, 170, { pad: false, awn: '#f0b13c' });
-    m.spr('carPink', 780, 420, { solid: 40 });
+    m.spr('carPink', 780, 420, { solidRect: [100, 44], solidOy: 6 });
     m.spr('cone', 1050, 430);
     m.flat('puddle', 1280, 380, 90, 50);
     // C3R1 社区小公园
     walk(1690, 60, 950, 440);
     grass(1712, 82, 906, 396);
     m.water(2080, 170, 320, 170);
-    m.spr('tree', 1820, 240, { solid: 24 });
-    m.spr('tree', 2320, 420, { solid: 24 });
+    m.spr('tree', 1820, 240, { solid: 24, solidOy: 16 });
+    m.spr('tree', 2320, 420, { solid: 24, solidOy: 16 });
     m.spr('bush', 2450, 180);
     m.spr('bush', 1780, 420);
     m.spr('bench', 2000, 430);
@@ -3276,21 +4219,20 @@ const MAPS = (() => {
     m.fill('court', 2792, 82, 866, 396);
     m.ops.push({ k: 'parkline', x: 2830, y: 140, w: 700, h: 120, vert: true, gap: 88 });
     m.ops.push({ k: 'parkline', x: 2830, y: 330, w: 700, h: 120, vert: true, gap: 88 });
-    m.spr('carCyan', 2920, 250, { solid: 40 });
-    m.spr('carAmber', 3090, 250, { solid: 40 });
-    m.spr('carPink', 3260, 430, { solid: 40 });
+    m.spr('carCyan', 2920, 250, { solidRect: [100, 44], solidOy: 6 });
+    m.spr('carAmber', 3090, 250, { solidRect: [100, 44], solidOy: 6 });
+    m.spr('carPink', 3260, 430, { solidRect: [100, 44], solidOy: 6 });
     m.flat('puddle', 3420, 180, 90, 50);
     // C5R1 工地
     walk(3800, 60, 940, 440);
     bld('ware', 3850, 100, 280, 160, { pad: false });
     m.slow('sand', 3830, 300, 860, 170);
     m.slow('mud', 4200, 300, 300, 170);
-    m.spr('boxes', 3960, 420, { solid: 34 });
-    m.spr('boxes', 4520, 300, { solid: 34 });
+    m.spr('boxes', 3960, 420, { solidRect: [60, 44], solidOy: 6 }); m.spr('boxes', 4520, 300, { solidRect: [60, 44], solidOy: 6 }); // 修复:货箱碰撞贴贴图
     m.spr('cone', 4100, 430); m.spr('cone', 4260, 360); m.spr('cone', 4620, 430);
-    // 工地围挡（南沿，留口）
-    m.block('fence', 3820, 474, 460, 22);
-    m.block('fence', 4380, 474, 340, 22);
+    // 工地围挡（南沿，留口）——修复:围挡贴图 22px 但格子按 40px 封锁，上沿压出一条隐形墙；对齐 20px 网格
+    m.block('fence', 3820, 480, 460, 20);
+    m.block('fence', 4380, 480, 340, 20);
     // C1R2 巷子住宅
     walk(60, 630, 480, 700);
     bld('house', 100, 700, 180, 150, { pad: false });
@@ -3303,16 +4245,17 @@ const MAPS = (() => {
     bld('apt', 700, 680, 190, 190, { pad: false });
     bld('apt', 1030, 680, 260, 190, { pad: false });
     m.fill('court', 700, 920, 860, 380);
-    m.spr('trash', 760, 1250); m.spr('bike', 1150, 1100); m.spr('boxes', 1320, 900, { solid: 30 });
+    m.spr('trash', 760, 1250); m.spr('bike', 1150, 1100); m.spr('boxes', 1320, 900, { solidRect: [60, 44], solidOy: 6 });
     m.flat('puddle', 900, 1050, 90, 50);
+    m.spr('tree', 1480, 1230, { solid: 24, solidOy: 16 }); m.spr('bench', 1180, 1220);
     // C3R2 中央公园（草地减速 + 池塘 + 猫道）
     walk(1690, 630, 950, 700);
     grass(1712, 652, 906, 656);
     m.water(2020, 830, 340, 200);
-    m.spr('tree', 1820, 760, { solid: 24 });
-    m.spr('tree', 2200, 1230, { solid: 24 });
-    m.spr('tree', 2500, 900, { solid: 24 });
-    m.spr('tree', 1800, 1150, { solid: 24 });
+    m.spr('tree', 1820, 760, { solid: 24, solidOy: 16 });
+    m.spr('tree', 2200, 1230, { solid: 24, solidOy: 16 });
+    m.spr('tree', 2500, 900, { solid: 24, solidOy: 16 });
+    m.spr('tree', 1800, 1150, { solid: 24, solidOy: 16 });
     m.spr('bush', 2480, 1240); m.spr('bush', 1900, 950);
     m.spr('bench', 2300, 1290); m.spr('bench', 1900, 720);
     m.spr('potted', 2100, 700);
@@ -3320,7 +4263,7 @@ const MAPS = (() => {
     walk(2770, 630, 910, 700);
     m.fill('court', 2792, 652, 866, 656);
     m.ops.push({ k: 'roundcourt', x: 3225, y: 980, r: 130 });
-    m.spr('fountain', 3225, 990, { solid: 62 });
+    m.spr('fountain', 3225, 990, { solidRect: [92, 86], solidOy: 22 }); // 修复:喷泉碰撞贴水池，广场南侧不再有隐形墙
     m.spr('bench', 3080, 1140); m.spr('bench', 3360, 1140);
     m.spr('bench', 3080, 800); m.spr('bench', 3360, 800);
     m.spr('potted', 2860, 700); m.spr('potted', 3580, 700);
@@ -3335,37 +4278,39 @@ const MAPS = (() => {
     walk(60, 1440, 480, 810);
     bld('ware', 90, 1500, 300, 220, { pad: false });
     m.fill('court', 82, 1740, 440, 480);
-    m.spr('boxes', 200, 1900, { solid: 32 }); m.spr('boxes', 380, 2050, { solid: 32 });
+    m.spr('boxes', 200, 1900, { solidRect: [60, 44], solidOy: 6 }); m.spr('boxes', 380, 2050, { solidRect: [60, 44], solidOy: 6 });
     m.spr('trash', 300, 2180);
     // C2R3 夜市广场
     walk(660, 1440, 920, 810);
     m.fill('court', 682, 1462, 876, 766);
-    m.spr('stallPink', 780, 1600, { solid: 42 });
-    m.spr('stallCyan', 980, 1600, { solid: 42 });
-    m.spr('stallAmber', 880, 1830, { solid: 42 });
+    m.spr('stallPink', 780, 1600, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallCyan', 980, 1600, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallAmber', 880, 1830, { solidRect: [100, 40], solidOy: 6 });
     m.flat('stringLights', 700, 1660, 300, 56, { rot: 0.06 });
     m.flat('stringLights', 1010, 1660, 300, 56, { rot: -0.06 });
     m.lamp(780, 1540, 'lantern'); m.lamp(980, 1540, 'lantern'); m.lamp(880, 1760, 'lantern');
-    m.spr('bench', 1300, 2000); m.spr('vending', 700, 2130, { solid: 22 });
+    m.spr('bench', 1300, 2000); m.spr('vending', 700, 2130, { solidRect: [44, 68], solidOy: 6 });
     // C3R3 商住楼
     walk(1690, 1440, 950, 810);
     bld('apt', 1720, 1480, 280, 200, { pad: false });
     bld('shop', 2050, 1480, 240, 180, { pad: false, awn: '#b79df0' });
     bld('house', 2050, 1720, 220, 150, { pad: false });
     m.spr('bike', 2450, 1520); m.spr('trash', 2500, 2160);
+    m.spr('tree', 1800, 2050, { solid: 24, solidOy: 16 }); m.spr('bench', 2350, 2050);
+    m.spr('potted', 2200, 2000); m.spr('bush', 2540, 1980);
     // C4R3 小神社
     walk(2770, 1440, 910, 810);
     m.fill('stone', 2792, 1462, 866, 766);
-    m.spr('torii', 3225, 1680, { pillars: 38 });
-    m.spr('stoneLantern', 3120, 1720, { solid: 16 }); m.spr('stoneLantern', 3330, 1720, { solid: 16 });
-    m.spr('tree', 2900, 2000, { solid: 24 }); m.spr('tree', 3550, 2000, { solid: 24 });
+    m.spr('torii', 3225, 1680, { pillars: 38, solidOy: 8 });
+    m.spr('stoneLantern', 3120, 1720, { solid: 16, solidOy: 8 }); m.spr('stoneLantern', 3330, 1720, { solid: 16, solidOy: 8 });
+    m.spr('tree', 2900, 2000, { solid: 24, solidOy: 16 }); m.spr('tree', 3550, 2000, { solid: 24, solidOy: 16 });
     m.lamp(3120, 1700, 'lamp'); m.lamp(3330, 1700, 'lamp');
     // C5R3 便利店+住宅
     walk(3800, 1440, 940, 810);
     bld('shop', 3850, 1480, 260, 180, { pad: false, awn: '#4fb3b0' });
     bld('apt', 4160, 1480, 240, 200, { pad: false });
-    m.spr('vending', 3950, 1740, { solid: 22 });
-    m.spr('carAmber', 4400, 2000, { solid: 40 });
+    m.spr('vending', 3950, 1740, { solidRect: [44, 68], solidOy: 6 });
+    m.spr('carAmber', 4400, 2000, { solidRect: [100, 44], solidOy: 6 });
     m.flat('puddle', 4100, 2050, 90, 50);
     // C1R4 窄住宅
     walk(60, 2400, 480, 730);
@@ -3373,22 +4318,28 @@ const MAPS = (() => {
     bld('house', 100, 2700, 190, 160, { pad: false });
     grass(310, 2460, 220, 660);
     m.spr('trash', 350, 3050);
+    m.spr('tree', 430, 2600, { solid: 24, solidOy: 16 });
     // C2R4 菜市场
     walk(660, 2400, 920, 730);
     m.fill('court', 682, 2422, 876, 686);
-    m.spr('stallCyan', 800, 2560, { solid: 42 });
-    m.spr('stallAmber', 1020, 2560, { solid: 42 });
-    m.spr('stallPink', 1240, 2560, { solid: 42 });
-    m.spr('stallCyan', 900, 2800, { solid: 42 });
-    m.spr('stallAmber', 1140, 2800, { solid: 42 });
-    m.spr('boxes', 1330, 3020, { solid: 32 });
+    m.spr('stallCyan', 800, 2560, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallAmber', 1020, 2560, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallPink', 1240, 2560, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallCyan', 900, 2800, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallAmber', 1140, 2800, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('boxes', 1330, 3020, { solidRect: [60, 44], solidOy: 6 });
     m.lamp(800, 2500, 'lantern'); m.lamp(1240, 2500, 'lantern');
     // C3R4 街心花园（猫道穿园）
     walk(1690, 2400, 950, 730);
     grass(1712, 2422, 906, 686);
     m.fill('flower', 1900, 2560, 180, 140);
     m.fill('flower', 2260, 2700, 160, 120);
-    m.spr('tree', 2050, 2900, { solid: 24 }); m.spr('tree', 2450, 2560, { solid: 24 });
+    m.fill('flower', 2450, 2850, 170, 120);
+    m.spr('tree', 2050, 2900, { solid: 24, solidOy: 16 }); m.spr('tree', 2450, 2560, { solid: 24, solidOy: 16 });
+    m.spr('stoneLantern', 1900, 2760, { solid: 15, solidOy: 8 }); m.spr('stoneLantern', 2520, 2740, { solid: 15, solidOy: 8 });
+    m.lamp(1900, 2740, 'lamp'); m.lamp(2520, 2720, 'lamp');
+    for (let i = 0; i < 4; i++) m.spr('bush', 1780 + i * 20, 2650 + i * 70);
+    m.spr('bench', 2450, 2470); m.spr('potted', 2560, 3010);
     m.spr('bush', 1800, 2620); m.spr('bench', 2200, 3020);
     // C4R4 临街商铺（猫道穿两店之间）
     walk(2770, 2400, 910, 730);
@@ -3396,15 +4347,15 @@ const MAPS = (() => {
     bld('shop', 3090, 2450, 230, 180, { pad: false, awn: '#f0b13c' });
     bld('shop', 3360, 2450, 240, 180, { pad: false, awn: '#4fb3b0' });
     m.fill('court', 2792, 2680, 866, 420);
-    m.spr('vending', 3300, 2900, { solid: 22 });
+    m.spr('vending', 3300, 2900, { solidRect: [44, 68], solidOy: 6 });
     m.spr('cone', 2860, 2950);
     // C5R4 停车场
     walk(3800, 2400, 940, 730);
     m.fill('court', 3822, 2422, 896, 686);
     m.ops.push({ k: 'parkline', x: 3860, y: 2500, w: 800, h: 120, vert: true, gap: 96 });
-    m.spr('carCyan', 3950, 2620, { solid: 40 });
-    m.spr('carPink', 4240, 2620, { solid: 40 });
-    m.spr('carAmber', 4530, 2620, { solid: 40 });
+    m.spr('carCyan', 3950, 2620, { solidRect: [100, 44], solidOy: 6 });
+    m.spr('carPink', 4240, 2620, { solidRect: [100, 44], solidOy: 6 });
+    m.spr('carAmber', 4530, 2620, { solidRect: [100, 44], solidOy: 6 });
     m.flat('puddle', 4000, 2900, 90, 50);
     m.spr('trash', 4600, 2950);
     // R5 南一排
@@ -3413,53 +4364,304 @@ const MAPS = (() => {
     bld('house', 310, 3290, 170, 150, { pad: false });
     walk(660, 3240, 920, 300);
     bld('ware', 700, 3280, 300, 180, { pad: false });
-    m.spr('boxes', 1120, 3400, { solid: 32 });
+    m.spr('boxes', 1120, 3400, { solidRect: [60, 44], solidOy: 6 });
     walk(1690, 3240, 950, 300);
     bld('shop', 1730, 3290, 260, 170, { pad: false, awn: '#8fd982' });
-    m.spr('vending', 2100, 3420, { solid: 22 });
+    m.spr('vending', 2100, 3420, { solidRect: [44, 68], solidOy: 6 });
     walk(2770, 3240, 910, 300);
     m.fill('court', 2792, 3262, 866, 260);
-    m.spr('bench', 3050, 3400); m.spr('tree', 3300, 3380, { solid: 24 });
+    m.spr('bench', 3050, 3400); m.spr('tree', 3300, 3380, { solid: 24, solidOy: 16 });
     walk(3800, 3240, 940, 300);
     bld('apt', 3850, 3280, 240, 170, { pad: false });
     bld('house', 4140, 3280, 200, 150, { pad: false });
+    /* ---- C6 东扩街区（意见2：新增区域填满，不留空地） ---- */
+    // C6R1a 宠物街（猫咖主题小店）
+    walk(4740, 60, 410, 440);
+    bld('shop', 4770, 100, 160, 150, { pad: false, awn: '#e0678f' });
+    bld('shop', 4950, 100, 160, 150, { pad: false, awn: '#b79df0' });
+    m.spr('potted', 4800, 330); m.spr('potted', 5060, 330);
+    m.spr('vending', 4990, 420, { solidRect: [44, 68], solidOy: 6 });
+    m.spr('bike', 4820, 430);
+    // C6R1b 钟楼广场（新地标：老城钟楼）
+    walk(5270, 60, 370, 440);
+    m.fill('court', 5292, 82, 326, 396);
+    m.ops.push({ k: 'roundcourt', x: 5455, y: 300, r: 120 });
+    m.spr('clockTower', 5455, 380, { sx: 1.5, sy: 1.2, solidRect: [195, 144], solidOy: 17 }); // 钟楼放大(约270×420)，碰撞贴台基
+    m.spr('bench', 5330, 400); m.spr('bench', 5580, 400);
+    m.spr('potted', 5330, 170); m.spr('potted', 5580, 170);
+    m.lamp(5330, 160, 'lantern'); m.lamp(5580, 160, 'lantern');
+    m.flat('puddle', 5400, 440, 90, 50);
+    // C6R2a 建材市场
+    walk(4740, 630, 410, 700);
+    bld('ware', 4770, 680, 240, 170, { pad: false });
+    m.slow('mud', 4770, 950, 350, 330);
+    m.spr('carAmber', 4950, 810, { solidRect: [100, 44], solidOy: 6 });
+    m.spr('boxes', 4850, 1250, { solidRect: [60, 44], solidOy: 6 });
+    m.spr('boxes', 5060, 1110, { solidRect: [60, 44], solidOy: 6 });
+    m.spr('cone', 4990, 960); m.spr('cone', 4880, 1090); m.spr('cone', 5090, 1260);
+    // C6R2b 巷弄住宅
+    walk(5270, 630, 370, 700);
+    bld('house', 5300, 700, 150, 140, { pad: false });
+    bld('house', 5480, 700, 140, 140, { pad: false });
+    bld('house', 5300, 900, 150, 140, { pad: false });
+    grass(5300, 1120, 300, 180);
+    m.spr('tree', 5460, 1240, { solid: 24, solidOy: 16 });
+    m.spr('bike', 5590, 1120); m.spr('trash', 5330, 1290);
+    // C6R3a 停车分场
+    walk(4740, 1440, 410, 810);
+    m.fill('court', 4762, 1462, 366, 766);
+    m.ops.push({ k: 'parkline', x: 4790, y: 1540, w: 310, h: 120, vert: true, gap: 88 });
+    m.spr('carCyan', 4850, 1660, { solidRect: [100, 44], solidOy: 6 });
+    m.spr('carPink', 5010, 1660, { solidRect: [100, 44], solidOy: 6 });
+    m.spr('carAmber', 4850, 1960, { solidRect: [100, 44], solidOy: 6 });
+    m.spr('cone', 5090, 1800);
+    m.flat('puddle', 5010, 2090, 90, 50);
+    // C6R3b 老当铺 + 仓库
+    walk(5270, 1440, 370, 810);
+    bld('shop', 5300, 1490, 180, 160, { pad: false, awn: '#f0b13c' });
+    bld('ware', 5300, 1710, 280, 200, { pad: false });
+    m.spr('boxes', 5430, 2170, { solidRect: [60, 44], solidOy: 6 });
+    m.spr('trash', 5580, 2000); m.spr('bike', 5580, 1600);
+    // C6R4a 美食排档
+    walk(4740, 2400, 410, 730);
+    m.fill('court', 4762, 2422, 366, 686);
+    m.spr('stallAmber', 4860, 2590, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallCyan', 5040, 2590, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallPink', 4950, 2830, { solidRect: [100, 40], solidOy: 6 });
+    m.flat('stringLights', 4790, 2650, 300, 56);
+    m.lamp(4860, 2530, 'lantern'); m.lamp(5040, 2530, 'lantern');
+    m.spr('bench', 4950, 3030); m.spr('trash', 5080, 2950);
+    // C6R4b 汽修铺
+    walk(5270, 2400, 370, 730);
+    bld('ware', 5300, 2460, 260, 170, { pad: false });
+    m.fill('court', 5292, 2700, 326, 400);
+    m.spr('carAmber', 5400, 2910, { solidRect: [100, 44], solidOy: 6 });
+    m.spr('cone', 5320, 2990); m.spr('cone', 5550, 2870);
+    m.spr('boxes', 5570, 3050, { solidRect: [60, 44], solidOy: 6 });
+    m.flat('puddle', 5450, 3050, 90, 50);
+    // C6R5 骑楼杂货 + 街角绿地
+    walk(4740, 3240, 410, 300);
+    bld('shop', 4770, 3280, 170, 150, { pad: false, awn: '#4fb3b0' });
+    bld('house', 4980, 3290, 140, 140, { pad: false });
+    walk(5270, 3240, 370, 300);
+    m.spr('vending', 5330, 3410, { solidRect: [44, 68], solidOy: 6 });
+    m.spr('bench', 5450, 3460); m.spr('tree', 5560, 3390, { solid: 24, solidOy: 16 });
+    /* ---- S1 南扩街区（意见2：夜市向南延伸一街） ---- */
+    // C1S1 南路住宅
+    walk(60, 3680, 480, 430);
+    bld('house', 100, 3730, 190, 160, { pad: false });
+    bld('house', 330, 3730, 170, 160, { pad: false });
+    grass(100, 3950, 380, 130);
+    m.spr('tree', 430, 4010, { solid: 24, solidOy: 16 });
+    m.spr('trash', 360, 4060);
+    // C2S1 夜市小吃广场
+    walk(660, 3680, 920, 430);
+    m.fill('court', 682, 3702, 876, 386);
+    m.spr('stallPink', 800, 3840, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallCyan', 1020, 3840, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallAmber', 1240, 3840, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallCyan', 910, 4040, { solidRect: [100, 40], solidOy: 6 });
+    m.flat('stringLights', 720, 3890, 380, 56);
+    m.flat('stringLights', 1120, 3890, 380, 56);
+    m.lamp(800, 3780, 'lantern'); m.lamp(1240, 3780, 'lantern');
+    m.spr('trash', 1410, 4030);
+    // C3S1 棋牌广场
+    walk(1690, 3680, 950, 430);
+    m.fill('court', 1712, 3702, 906, 386);
+    m.ops.push({ k: 'roundcourt', x: 2165, y: 3900, r: 100 });
+    m.spr('bench', 1960, 3990); m.spr('bench', 2380, 3990);
+    m.spr('tree', 1830, 3830, { solid: 24, solidOy: 16 }); m.spr('tree', 2500, 3830, { solid: 24, solidOy: 16 });
+    m.spr('potted', 2050, 3790); m.spr('potted', 2280, 3790);
+    // C4S1 菜市南厅
+    walk(2770, 3680, 910, 430);
+    m.fill('court', 2792, 3702, 866, 386);
+    m.spr('stallAmber', 2900, 3850, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallPink', 3120, 3850, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallCyan', 3340, 3850, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('boxes', 3530, 4000, { solidRect: [60, 44], solidOy: 6 });
+    m.lamp(2900, 3780, 'lantern'); m.lamp(3340, 3780, 'lantern');
+    // C5S1 公交场站
+    walk(3800, 3680, 940, 430);
+    m.fill('court', 3822, 3702, 896, 386);
+    m.ops.push({ k: 'parkline', x: 3860, y: 3760, w: 760, h: 120, vert: true, gap: 96 });
+    m.spr('carCyan', 3980, 3910, { solidRect: [100, 44], solidOy: 6 });
+    m.spr('carAmber', 4280, 3910, { solidRect: [100, 44], solidOy: 6 });
+    m.spr('carPink', 4580, 3910, { solidRect: [100, 44], solidOy: 6 });
+    m.spr('cone', 3900, 4050);
+    // C6S1 修车摊 + 街角小花园
+    walk(4740, 3680, 410, 430);
+    bld('ware', 4770, 3730, 240, 160, { pad: false });
+    m.spr('carAmber', 4930, 4000, { solidRect: [100, 44], solidOy: 6 });
+    m.spr('boxes', 5100, 4050, { solidRect: [60, 44], solidOy: 6 });
+    walk(5270, 3680, 370, 430);
+    grass(5292, 3702, 326, 386);
+    m.spr('tree', 5400, 3860, { solid: 24, solidOy: 16 }); m.spr('tree', 5570, 4030, { solid: 24, solidOy: 16 });
+    m.spr('bench', 5480, 3790); m.spr('bush', 5330, 4030);
+    /* ---- C7 东二列（意见2第二轮：新增区域按密度标准填满） ---- */
+    // C7R1a 花鸟市场
+    walk(5740, 60, 460, 440);
+    bld('shop', 5780, 100, 190, 160, { pad: false, awn: '#8fd982' });
+    bld('shop', 6000, 100, 170, 160, { pad: false, awn: '#f0b13c' });
+    m.fill('flower', 5790, 330, 170, 100); m.fill('flower', 6000, 330, 150, 100);
+    m.spr('potted', 5800, 460); m.spr('potted', 5960, 460); m.spr('potted', 6120, 460);
+    // C7R1b 停车满位的车场
+    walk(6370, 60, 620, 440);
+    m.fill('court', 6392, 82, 576, 396);
+    m.ops.push({ k: 'parkline', x: 6430, y: 140, w: 480, h: 120, vert: true, gap: 96 });
+    for (let i = 0; i < 5; i++) {
+      m.spr(['carPink', 'carCyan', 'carAmber'][i % 3], 6500 + i * 100, 260, { solidRect: [100, 44], solidOy: 6 });
+      m.spr(['carCyan', 'carAmber', 'carPink'][i % 3], 6500 + i * 100, 450, { solidRect: [100, 44], solidOy: 6 });
+    }
+    m.flat('puddle', 6900, 470, 90, 50);
+    // C7R2a 电器城
+    walk(5740, 630, 460, 700);
+    bld('shop', 5780, 680, 260, 200, { pad: false, awn: '#4fb3b0' });
+    m.spr('carAmber', 5900, 1000, { solidRect: [100, 44], solidOy: 6 });
+    m.spr('boxes', 6080, 1240, { solidRect: [60, 44], solidOy: 6 });
+    m.spr('bike', 5790, 1250);
+    // C7R2b 粮油铺子
+    walk(6370, 630, 620, 700);
+    bld('ware', 6400, 680, 300, 190, { pad: false });
+    bld('house', 6750, 700, 200, 160, { pad: false });
+    m.slow('mud', 6400, 950, 560, 340);
+    m.spr('boxes', 6500, 1280, { solidRect: [60, 44], solidOy: 6 });
+    m.spr('cone', 6800, 1150); m.spr('trash', 6940, 950);
+    // C7R3a 仓储院
+    walk(5740, 1440, 460, 810);
+    bld('ware', 5780, 1490, 340, 220, { pad: false });
+    m.slow('net', 5780, 1800, 380, 240);
+    m.spr('boxes', 5900, 2160, { solidRect: [60, 44], solidOy: 6 });
+    m.spr('boxes', 6100, 2050, { solidRect: [60, 44], solidOy: 6 });
+    // C7R3b 夜市延长
+    walk(6370, 1440, 620, 810);
+    m.fill('court', 6392, 1462, 576, 766);
+    for (let i = 0; i < 3; i++) m.spr(['stallPink', 'stallCyan', 'stallAmber'][i % 3], 6500 + i * 180, 1640, { solidRect: [100, 40], solidOy: 6 });
+    for (let i = 0; i < 2; i++) m.spr(['stallAmber', 'stallCyan'][i], 6600 + i * 220, 1900, { solidRect: [100, 40], solidOy: 6 });
+    m.flat('stringLights', 6420, 1700, 520, 56);
+    m.lamp(6500, 1580, 'lantern'); m.lamp(6860, 1580, 'lantern');
+    m.spr('bench', 6700, 2150);
+    // C7R4a 修车行
+    walk(5740, 2400, 460, 730);
+    bld('ware', 5780, 2460, 300, 180, { pad: false });
+    m.spr('carAmber', 5920, 2800, { solidRect: [100, 44], solidOy: 6 });
+    m.spr('carCyan', 5900, 3040, { solidRect: [100, 44], solidOy: 6 });
+    m.spr('cone', 5800, 2900); m.spr('boxes', 6120, 3080, { solidRect: [60, 44], solidOy: 6 });
+    // C7R4b 宠物医院
+    walk(6370, 2400, 620, 730);
+    bld('shop', 6400, 2460, 240, 180, { pad: false, awn: '#e0678f' });
+    bld('house', 6700, 2470, 200, 160, { pad: false });
+    grass(6400, 2720, 560, 380);
+    m.spr('tree', 6560, 2900, { solid: 24, solidOy: 16 }); m.spr('tree', 6840, 3020, { solid: 24, solidOy: 16 });
+    m.spr('bench', 6680, 2820);
+    // C7R5 骑楼杂货
+    walk(5740, 3240, 460, 300);
+    bld('shop', 5780, 3280, 180, 150, { pad: false, awn: '#b79df0' });
+    bld('house', 6000, 3290, 150, 140, { pad: false });
+    walk(6370, 3240, 620, 300);
+    m.spr('stallCyan', 6500, 3420, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('bench', 6720, 3430); m.spr('tree', 6900, 3380, { solid: 24, solidOy: 16 });
+    // C7 S1 行：茶楼 + 街角绿地
+    walk(5740, 3680, 460, 430);
+    bld('shop', 5780, 3730, 240, 170, { pad: false, awn: '#e0678f' });
+    m.spr('vending', 5960, 4020, { solidRect: [44, 68], solidOy: 6 });
+    walk(6370, 3680, 620, 430);
+    grass(6392, 3702, 576, 386);
+    m.spr('tree', 6550, 3880, { solid: 24, solidOy: 16 }); m.spr('tree', 6800, 4030, { solid: 24, solidOy: 16 });
+    m.spr('bench', 6680, 3800); m.spr('bush', 6440, 4020);
+    /* ---- S2/S3 南扩二、三排（意见2第二轮：循环铺内容保证密度） ---- */
+    const S2X = [[60, 480], [660, 920], [1690, 950], [2770, 910], [3800, 940], [4740, 410], [5270, 370], [5740, 460], [6370, 620]];
+    for (let i = 0; i < S2X.length; i++) {
+      const [sx2, sw2] = S2X[i];
+      walk(sx2, 4300, sw2, 440);
+      const kind = i % 3;
+      if (kind === 0) { // 市集排
+        m.fill('court', sx2 + 22, 4322, sw2 - 44, 396);
+        for (let k2 = 0; k2 < Math.floor(sw2 / 240); k2++)
+          m.spr(['stallPink', 'stallCyan', 'stallAmber'][k2 % 3], sx2 + 140 + k2 * 220, 4470, { solidRect: [100, 40], solidOy: 6 });
+        m.flat('stringLights', sx2 + 40, 4530, Math.min(560, sw2 - 120), 56);
+        m.lamp(sx2 + 140, 4400, 'lantern'); m.spr('trash', sx2 + sw2 - 70, 4680);
+      } else if (kind === 1) { // 住宅排
+        bld('house', sx2 + 40, 4360, 190, 160, { pad: false });
+        bld('house', sx2 + 270, 4360, Math.min(190, sw2 - 330), 160, { pad: false });
+        grass(sx2 + 40, 4580, sw2 - 80, 130);
+        m.spr('tree', sx2 + 130, 4690, { solid: 24, solidOy: 16 });
+        m.spr('trash', sx2 + sw2 - 70, 4700);
+      } else { // 车场排
+        m.fill('court', sx2 + 22, 4322, sw2 - 44, 396);
+        m.ops.push({ k: 'parkline', x: sx2 + 60, y: 4390, w: sw2 - 140, h: 120, vert: true, gap: 96 });
+        for (let k2 = 0; k2 < Math.min(4, Math.floor((sw2 - 200) / 230)) + 1; k2++)
+          m.spr(['carCyan', 'carAmber', 'carPink'][k2 % 3], sx2 + 150 + k2 * 230, 4570, { solidRect: [100, 44], solidOy: 6 });
+        m.spr('cone', sx2 + 60, 4700); m.spr('bike', sx2 + sw2 - 80, 4650);
+      }
+    }
+    // S3 骑楼窄排（小店连排）
+    for (let i = 0; i < S2X.length; i++) {
+      const [sx2, sw2] = S2X[i];
+      walk(sx2, 5000, sw2, 340);
+      bld('shop', sx2 + 40, 5050, Math.min(220, sw2 - 160), 160, { pad: false, awn: AWNS[i % 5] });
+      if (sw2 > 500) bld('house', sx2 + 300, 5060, 180, 150, { pad: false });
+      m.spr('trash', sx2 + sw2 - 60, 5280);
+      m.spr('vending', sx2 + sw2 - 130, 5160, { solidRect: [44, 68], solidOy: 6 });
+    }
     /* ---- 猫道（只有猫能钻的缝隙） ---- */
     m.cat(920, 630, 44, 700);        // 公寓楼间缝 → 上下街
     m.spr('catArch', 942, 660); m.spr('pawSign', 942, 1300);
     m.cat(1660, 1180, 480, 44);      // 公园树篱洞 → 停车场
     m.spr('catArch', 2130, 1202); m.spr('pawSign', 1700, 1202);
-    m.cat(3043, 2400, 44, 730);      // 两间店铺的夹缝
+    m.cat(3040, 2400, 40, 730);      // 两间店铺的夹缝——修复:西移对齐网格，猫道东沿不再踩到店铺贴图
     m.spr('catArch', 3065, 2440); m.spr('pawSign', 3065, 3090);
     m.cat(120, 1800, 440, 44);       // 仓库后墙根
     m.spr('catArch', 160, 1822); m.spr('pawSign', 520, 1822);
     /* ---- 夜市大街（H3）摊位与彩灯 ---- */
-    for (const sx of [1800, 2050, 2300, 2900, 3150]) m.spr('stallAmber', sx, 2245, { solid: 42 });
-    for (const sx of [1900, 2150, 2400]) m.spr('stallCyan', sx, 2465, { solid: 42 });
+    for (const sx of [1800, 2050, 2300, 2900, 3150]) m.spr('stallAmber', sx, 2245, { solidRect: [100, 40], solidOy: 6 });
+    for (const sx of [1900, 2150, 2400]) m.spr('stallCyan', sx, 2465, { solidRect: [100, 40], solidOy: 6 });
     m.flat('stringLights', 1700, 2330, 420, 56);
     m.flat('stringLights', 2140, 2330, 420, 56);
     m.flat('stringLights', 2820, 2330, 420, 56);
     for (const lx of [1800, 2300, 2900, 3400]) m.lamp(lx, 2260, 'lantern');
     for (const lx of [1900, 2400, 3000]) m.lamp(lx, 2450, 'lantern');
+    // 大牌坊（新地标）：跨街立在夜市大街西口，放大到约 450 宽，只挡两柱、门洞通行
+    m.spr('paifang', 1720, 2406, { sx: 1.5, sy: 1.5, pillars: 150, pr: 22, solidOy: 6 });
+    m.lamp(1600, 2450, 'lantern'); m.lamp(1840, 2450, 'lantern');
     /* ---- 街道家具 ---- */
-    for (const [lx, ly] of [[560, 480], [1560, 480], [2620, 480], [3660, 480], [560, 1310], [2620, 1310], [4360, 1310],
-      [560, 2230], [1560, 2230], [3660, 2230], [560, 3110], [2620, 3110], [3660, 3110], [4360, 3110]]) {
-      m.spr('lamp', lx, ly); m.lamp(lx, ly - 40, 'lamp');
+    // 意见2/3：灯柱=小圆形阻挡，贴住杆脚；新增街口补齐路灯
+    for (const [lx, ly] of [[560, 480], [1560, 480], [2620, 480], [3660, 480], [4740, 480], [5140, 480],
+      [560, 1310], [2620, 1310], [4360, 1310], [5140, 1310],
+      [560, 2230], [1560, 2230], [3660, 2230], [5140, 2230],
+      [560, 3110], [2620, 3110], [3660, 3110], [4360, 3110], [5140, 3110],
+      [1560, 3520], [3660, 3520], [5140, 3520], [900, 4100], [2620, 4100], [4360, 4100]]) {
+      m.spr('lamp', lx, ly, { solid: 8, solidOy: 4 }); m.lamp(lx, ly - 40, 'lamp');
     }
     // 斑马线 / 井盖 / 消火栓
     m.ops.push({ k: 'crosswalk', x: 560, y: 560, w: 80, h: 100 });
     m.ops.push({ k: 'crosswalk', x: 2700, y: 2300, w: 100, h: 80 });
     m.ops.push({ k: 'crosswalk', x: 1600, y: 1380, w: 80, h: 100 });
-    for (const [mx, my] of [[1000, 560], [2200, 1400], [3000, 2330], [1200, 3180], [3400, 560], [600, 2000]]) {
+    m.ops.push({ k: 'crosswalk', x: 5150, y: 560, w: 100, h: 80 });
+    m.ops.push({ k: 'crosswalk', x: 2200, y: 3540, w: 100, h: 80 });
+    for (const [mx, my] of [[1000, 560], [2200, 1400], [3000, 2330], [1200, 3180], [3400, 560], [600, 2000],
+      [4800, 560], [3400, 3610], [2000, 4180], [5450, 2330]]) {
       m.flat('manhole', mx, my, 44, 44);
     }
-    for (const [hx, hy] of [[700, 520], [2700, 1380], [3800, 2230], [1700, 3170]]) m.spr('hydrant', hx, hy);
-    // 店门口霓虹招牌
+    for (const [hx, hy] of [[700, 520], [2700, 1380], [3800, 2230], [1700, 3170], [4780, 700], [5310, 2440]]) m.spr('hydrant', hx, hy, { solid: 9, solidOy: 4 }); // 意见3：消火栓不可穿
+    // 意见2第二轮：街角家具成排（电话亭/公交站牌/贩卖机/自行车/垃圾桶/盆栽轮转摆放）
+    const cornerKit = [['phoneBooth', 40, 60, 8], ['busStop', 20, 40, 10], ['vending', 44, 68, 8], ['trash', 0, 0, 0], ['bike', 0, 0, 0], ['potted', 0, 0, 0]];
+    const corners = [[700, 470], [1720, 470], [2780, 470], [3820, 420], [4880, 470], [6420, 470],
+      [700, 1300], [2780, 1300], [4880, 1300], [6420, 1300],
+      [700, 2200], [3820, 2200], [4880, 2200], [6420, 2200],
+      [700, 3100], [2780, 3100], [4880, 3100], [6420, 3100],
+      [1720, 4060], [3820, 4750], [5950, 4750], [2780, 5290], [4880, 5290]];
+    for (let i = 0; i < corners.length; i++) {
+      const [k2, sw2, sh2, oy2] = cornerKit[i % cornerKit.length];
+      m.spr(k2, corners[i][0], corners[i][1], sw2 ? { solidRect: [sw2, sh2], solidOy: oy2 } : {});
+    }
+    // 店门口霓虹招牌（灯柱小圆阻挡）
     const sign = Art.decor.sign;
     const neon = [['喵', 820, 290, 'neonPink'], ['拉面', 1100, 290, 'neonCyan'], ['魚', 1370, 290, 'neonPink'],
       ['OPEN', 1970, 1680, 'neonCyan'], ['猫咖', 2170, 1680, 'neonPink'], ['24H', 3980, 1680, 'neonCyan'],
       ['OPEN', 2920, 2650, 'neonPink'], ['拉面', 3205, 2650, 'neonCyan'], ['喵', 3480, 2650, 'neonPink'],
-      ['魚', 1860, 3480, 'neonCyan']];
-    for (const [k, sx, sy, g] of neon) { m.spr(sign[k], sx, sy); m.lamp(sx, sy - 46, g); }
+      ['魚', 1860, 3480, 'neonCyan'],
+      ['猫咖', 4850, 290, 'neonPink'], ['OPEN', 5030, 290, 'neonCyan'], ['24H', 5390, 1690, 'neonCyan']];
+    for (const [k, sx, sy, g] of neon) { m.spr(sign[k], sx, sy, { solid: 8, solidOy: 4 }); m.lamp(sx, sy - 46, g); }
     return m;
   }
 
@@ -3467,22 +4669,27 @@ const MAPS = (() => {
   function sakura() {
     const m = new MB({
       id: 'sakura', name: '樱花公园', emoji: '🌸',
-      desc: '满园樱花 · 池塘木桥 · 树林小径',
-      w: 4400, h: 3400, start: { x: 2200, y: 3180 },
+      desc: '满园樱花 · 樱花神社 · 池塘石桥',
+      w: 6500, h: 5000, start: { x: 2200, y: 3180 },
       base: '#3a7a5c', catGround: '#5a4642', catGround2: '#4e3c38', slowMul: 0.55,
       pv: { 0: '#c9b8a8', 1: '#1c3a5f', 2: '#3f7057', 3: '#e8a0bc' }
     });
     // 全园草地（减速）→ 石径快走
     m.slow('grass', 0, 0, m.w, m.h);
+    // 地面细节层（意见2第二轮）：落樱地毯 + 草皮斑块铺满全园，垫在路径/树木底下
+    m.scatter('petals', 120, 120, 6380, 4880, 300, 110);
+    m.flatScatter('puddle', 600, 600, 6200, 4700, 900, 90, 50);
     const clear = []; // 路径避让区（实心树不踩进路径）
     const stone = (x, y, w2, h2) => { m.stamp(x, y, w2, h2, 0); m.fill('stone', x, y, w2, h2); clear.push([x, y, w2, h2]); };
     const wood = (x, y, w2, h2) => { m.stamp(x, y, w2, h2, 0); m.fill('wood', x, y, w2, h2); clear.push([x, y, w2, h2]); };
     m.border('hedge', 60);
-    // 入口广场 + 主径
+    // 入口广场 + 主径（意见2：广场向南延伸，鸟居改立南门正中）
     stone(1980, 3020, 440, 320);
+    stone(1980, 3340, 440, 460);
     stone(2160, 700, 100, 2400);
-    m.spr('torii', 2200, 3270, { pillars: 38 });
-    m.lamp(2200, 3230, 'lantern');
+    m.spr('torii', 2200, 3700, { pillars: 38, solidOy: 8 });
+    m.spr('stoneLantern', 2080, 3620, { solid: 15, solidOy: 8 }); m.spr('stoneLantern', 2320, 3620, { solid: 15, solidOy: 8 });
+    m.lamp(2200, 3660, 'lantern');
     // 环池小径
     stone(1500, 880, 1400, 90);
     stone(1500, 1560, 1400, 90);
@@ -3504,6 +4711,35 @@ const MAPS = (() => {
     clear.push([3962, 460, 36, 1240]); // 树林避开独木两端
     m.spr('catArch', 3998, 560);
     m.spr('pawSign', 3998, 1640);
+    /* ---- 东扩：樱花神社（大鸟居 + 拜殿）与放生池石桥（意见2地标） ---- */
+    // 北岸滨径：接跨湖大桥北端 → 神社参道
+    stone(3600, 340, 1180, 100);
+    stone(4540, 440, 560, 680);        // 神社前庭
+    m.spr('torii', 4790, 580, { sx: 2.2, sy: 2.0, pillars: 82, pr: 34, solidOy: 26 }); // 大鸟居再加码(约350宽)，柱距柱径随比例加大
+    m.lamp(4790, 540, 'lantern');
+    m.spr('shrine', 4800, 1080, { sx: 1.5, sy: 1.2, solidRect: [465, 216], solidOy: 7 }); // 拜殿放大(约510×300)，碰撞贴殿身
+    m.spr('stoneLantern', 4620, 1140, { solid: 15, solidOy: 8 }); m.spr('stoneLantern', 4980, 1140, { solid: 15, solidOy: 8 });
+    m.lamp(4620, 1120, 'lamp'); m.lamp(4980, 1120, 'lamp');
+    m.spr('bench', 4620, 700); m.spr('bench', 4980, 700);
+    // 放生池 + 石桥（意见2：池塘石桥）
+    m.water(4380, 1560, 640, 400);
+    stone(4660, 1120, 90, 440);        // 神社南阶引道
+    m.stamp(4660, 1520, 90, 520, 0); m.fill('bridge', 4660, 1520, 90, 520);
+    clear.push([4660, 1520, 90, 520]); // 树林避开石桥
+    stone(4580, 2000, 250, 120);       // 南岸落地
+    // 东山茶屋（意见2第二轮：东扩区内容，北岸滨径东延接入）
+    stone(4780, 340, 1060, 100);
+    stone(5620, 440, 90, 320);
+    m.bld('house', 5460, 700, 320, 240, { padK: 'stone' });
+    m.spr('stoneLantern', 5400, 1020, { solid: 15, solidOy: 8 }); m.spr('stoneLantern', 5820, 1020, { solid: 15, solidOy: 8 });
+    m.lamp(5400, 1000, 'lamp'); m.lamp(5820, 1000, 'lamp');
+    m.spr('bench', 5340, 520); m.spr('bench', 5940, 520);
+    m.spr('stallAmber', 5860, 1240, { solidRect: [100, 40], solidOy: 6 });
+    // 花祭市集（桥南草地）
+    m.spr('stallPink', 4560, 3520, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallCyan', 4800, 3520, { solidRect: [100, 40], solidOy: 6 });
+    m.lamp(4560, 3470, 'lantern'); m.lamp(4800, 3470, 'lantern');
+    m.flat('picnic', 4700, 3800, 116, 92);
     // 支路到空地
     stone(1500, 2000, 340, 90);
     stone(2900, 1200, 260, 90);
@@ -3511,24 +4747,45 @@ const MAPS = (() => {
     // 花坛（入口两侧）
     m.fill('flower', 2020, 3060, 150, 240);
     m.fill('flower', 2290, 3060, 130, 240);
-    /* 树林（实心樱花树 = 迷宫墙；草地减速拖慢鼠群；自动避让路径） */
+    /* 树林（实心樱花树 = 迷宫墙；草地减速拖慢鼠群；自动避让路径）
+       意见2第二轮：去方阵化——±40px 抖动错位、大小 0.85~1.15 随机、约三成格点空出疏密不均、
+       林下偶有岩石，配合落樱地毯层打破网格感 */
     const grove = (x0, y0, x1, y1, step, kind) => {
       for (let gy = y0; gy <= y1; gy += step) for (let gx = x0; gx <= x1; gx += step) {
-        const jx = (U.hash2(gx, gy, 7) - 0.5) * 30, jy = (U.hash2(gy, gx, 8) - 0.5) * 30;
+        if (U.hash2(gx, gy, 5) < 0.3) continue; // 疏密不均
+        const jx = (U.hash2(gx, gy, 7) - 0.5) * 80, jy = (U.hash2(gy, gx, 8) - 0.5) * 80;
         const tx = gx + jx, ty = gy + jy;
         if (clear.some(c => tx > c[0] - 62 && tx < c[0] + c[2] + 62 && ty > c[1] - 62 && ty < c[1] + c[3] + 62)) continue;
         const key = U.hash2(tx, ty, 9) < 0.3 ? 'cherry2' : (kind || 'cherry');
-        m.spr(key, tx, ty, { solid: 30 });
+        const sc = 0.85 + U.hash2(gx, gy, 10) * 0.3;
+        m.spr(key, tx, ty, { sx: sc, sy: sc, solid: 30, solidOy: 24 }); // 修复:樱花树碰撞圆上移贴树干，树脚南沿不再多挡一条草地
+        if (U.hash2(ty, tx, 11) < 0.05) m.spr('rock', tx + 52, ty + 34, { solid: 26, solidOy: 22 }); // 林间石块
       }
     };
-    grove(200, 200, 1300, 780, 110);
-    grove(200, 1900, 1300, 3000, 110);
-    grove(3220, 1650, 4300, 2100, 100);
-    grove(1560, 1900, 1980, 2500, 100);
+    grove(200, 200, 1300, 780, 140);
+    grove(200, 1900, 1300, 3000, 140);
+    grove(3220, 1650, 4300, 2100, 130);
+    grove(1560, 1900, 1980, 2500, 130);
+    // 意见2第二轮：东扩/南扩樱林（合并成大片，配合疏密抖动不留方阵感）
+    grove(4400, 2200, 6380, 3850, 145);
+    grove(5300, 250, 6380, 1350, 145);
+    grove(200, 3100, 1300, 4850, 140);
+    grove(1500, 4150, 3250, 4900, 150);
+    clear.push([4460, 2200, 44, 940]); // 树林避开桥南猫道
+    clear.push([4430, 3380, 700, 560]); // 树林避开花祭市集空地
+    clear.push([5300, 400, 700, 900]);  // 树林避开东山茶屋庭院
+    clear.push([3950, 4180, 1400, 720]); // 树林避开南野餐草坪
     // 零散树
-    for (const [tx, ty] of [[1420, 1000], [2980, 1000], [1450, 1500], [2960, 1500], [1000, 1700], [3400, 2600], [2600, 2700], [1800, 2850]]) {
-      m.spr('cherry', tx, ty, { solid: 30 });
+    for (const [tx, ty] of [[1420, 1000], [2980, 1000], [1450, 1500], [2960, 1500], [1000, 1700], [3400, 2600], [2600, 2700], [1800, 2850],
+      [3400, 220], [4050, 220], [4450, 1300], [4880, 1300], [3700, 2550], [4300, 2600], [3600, 3050], [2900, 3200]]) {
+      m.spr('cherry', tx, ty, { solid: 30, solidOy: 24 });
     }
+    // 中央草坪补密度（意见2第二轮：错落树/花丛/灌木，避开石径与池塘）
+    for (const [tx2, ty2] of [[2500, 600], [2800, 750], [1700, 620], [1980, 520], [3020, 620], [2600, 1700], [2900, 1780], [1700, 1780], [2450, 1850], [3050, 1250], [1350, 1150], [1350, 1750]]) {
+      m.spr(U.hash2(tx2, ty2, 15) < 0.3 ? 'cherry2' : 'cherry', tx2, ty2, { solid: 30, solidOy: 24 });
+    }
+    for (const [bx2, by2] of [[2300, 700], [2750, 1650], [1850, 1700], [2200, 1780], [3100, 700], [1350, 1450]]) m.spr('bush', bx2, by2);
+    m.fill('flower', 2350, 1660, 150, 100); m.fill('flower', 1550, 700, 130, 90); m.fill('flower', 2900, 600, 140, 90);
     /* 猫道：树篱间兽径 */
     m.cat(400, 800, 44, 1800);
     m.spr('catArch', 422, 840); m.spr('pawSign', 422, 2560);
@@ -3536,11 +4793,36 @@ const MAPS = (() => {
     m.spr('pawSign', 1340, 2472); m.spr('catArch', 1940, 2472);
     m.cat(3700, 1560, 44, 840);
     m.spr('catArch', 3722, 1600); m.spr('pawSign', 3722, 2360);
+    m.cat(4460, 2200, 44, 940);      // 桥南樱林兽径（石桥南岸 → 花祭市集）
+    m.spr('catArch', 4482, 2260); m.spr('pawSign', 4482, 3080);
+    /* 南扩：花祭草坪（意见2） */
+    m.water(3060, 3560, 460, 260);   // 南池塘（水面不可过）
+    m.spr('stoneLantern', 2980, 3500, { solid: 15, solidOy: 8 }); m.spr('stoneLantern', 3600, 3500, { solid: 15, solidOy: 8 });
+    m.lamp(2980, 3480, 'lamp'); m.lamp(3600, 3480, 'lamp');
+    m.fill('flower', 2560, 3120, 180, 140);
+    m.fill('flower', 3140, 3400, 200, 130);
+    m.spr('bench', 1650, 3380); m.spr('bench', 2900, 3450);
+    m.spr('cherry', 2450, 3300, { solid: 30, solidOy: 24 });
+    m.spr('cherry2', 3350, 3360, { solid: 30, solidOy: 24 });
+    m.flat('picnic', 1300, 3300, 116, 92);
+    /* ---- 南拓野餐草坪 + 池塘（意见2第二轮填充） ---- */
+    stone(2160, 3800, 100, 1100);      // 主径南延贯通新南区
+    stone(1300, 4300, 1900, 90);       // 野餐区横径
+    m.water(3400, 4200, 520, 320);     // 南池塘（水面不可过）
+    stone(3300, 4100, 720, 80);        // 池塘北岸
+    wood(3560, 4140, 90, 260);         // 探水木栈道
+    stone(3200, 4060, 1500, 80);       // 野餐草坪连络径
+    for (const [px2, py2] of [[4150, 4350], [4500, 4520], [4850, 4330], [4300, 4720], [4650, 4800]]) m.flat('picnic', px2, py2, 116, 92);
+    m.spr('stallPink', 4050, 4250, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallAmber', 5250, 4280, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('bench', 4200, 4240); m.spr('bench', 5050, 4560); m.spr('bench', 4450, 4860);
+    m.spr('trash', 4700, 4620); m.spr('potted', 4000, 4480); m.spr('potted', 5350, 4520);
+    m.lamp(4150, 4300, 'lantern'); m.lamp(5100, 4300, 'lantern');
     /* 家具 */
-    m.spr('stallPink', 2060, 3260, { solid: 40 });
+    m.spr('stallPink', 2060, 3260, { solidRect: [100, 40], solidOy: 6 }); // 修复:摊位碰撞改矩形贴贴图，门前不再有隐形阻挡
     for (const [bx, by] of [[1700, 1700], [2700, 1700], [1600, 950], [2760, 950], [2300, 1700]]) m.spr('bench', bx, by);
     for (const [lx, ly] of [[2120, 1200], [2300, 1500], [2120, 2000], [2300, 2400], [2120, 2800], [830, 1200], [830, 2000], [2940, 1000], [2940, 1500]]) {
-      m.spr('stoneLantern', lx, ly, { solid: 15 });
+      m.spr('stoneLantern', lx, ly, { solid: 15, solidOy: 8 });
       m.lamp(lx, ly - 20, 'lamp');
     }
     for (const [px, py] of [[1600, 2050], [2960, 1260], [900, 2600], [3600, 1850]]) m.flat('picnic', px, py, 116, 92);
@@ -3549,98 +4831,176 @@ const MAPS = (() => {
     return m;
   }
 
-  /* ---------- ⚓ 港湾码头：海湾栈桥、集装箱阵、鱼市 ---------- */
+  /* ---------- ⚓ 港湾码头：集装箱堆场迷宫、岸桥货轮、鱼市沙滩 ---------- */
   function harbor() {
     const m = new MB({
       id: 'harbor', name: '港湾码头', emoji: '⚓',
-      desc: '集装箱阵 · 栈桥码头 · 鱼市沙滩',
-      w: 4600, h: 3400, start: { x: 1700, y: 2100 },
+      desc: '集装箱堆场 · 岸桥货轮 · 鱼市沙滩',
+      w: 6400, h: 4800, start: { x: 1600, y: 2260 },
       base: '#4a4f76', catGround: '#6e5a3e', catGround2: '#5f4c34',
       roofs: ['#6a7694', '#8f7d64'],
       pv: { 0: '#5a5f74', 1: '#1c3a5f', 2: '#a8946e', 3: '#d9a441' }
     });
     m.fill('court', 0, 0, m.w, m.h);
-    // 海湾 + 南水道
-    m.water(3350, 0, 1250, 3400);
-    m.water(0, 2800, 3350, 600);
+    // 地面细节层先垫底（油渍/轮胎印/格栅/井盖/水洼，显形在露出的码头地面上，被海/地块盖住）
+    m.scatter('oil', 120, 120, 6280, 4680, 540, 100);
+    m.scatter('tire', 120, 120, 6280, 4680, 650, 100);
+    m.scatter('grate', 140, 140, 6260, 4660, 780, 46);
+    m.flatScatter('manhole', 300, 300, 6100, 4400, 640, 44, 44);
+    m.flatScatter('puddle', 220, 220, 6200, 4500, 560, 90, 50);
+    // 海湾：东为外海、南为锚地（意见2：图幅放大，海域停大货轮）
+    m.water(4250, 0, 2150, 4800);
+    m.water(0, 3800, 4250, 1000);
     // 北/西围栏（东/南是海）
     m.block('fence', 0, 0, m.w, 50);
     m.block('fence', 0, 0, 50, m.h);
-    // 沙滩（水线上，减速）——先铺，避免盖到后画的栈桥
-    m.slow('sand', 600, 2600, 2700, 200);
+    // 沙滩（南水线上，减速）
+    m.slow('sand', 550, 3600, 3700, 200);
     const pier = (x, y, w2, h2) => { m.stamp(x, y, w2, h2, 0); m.fill('wood', x, y, w2, h2); };
-    // 栈桥
-    pier(3330, 860, 1000, 100);
-    pier(3700, 860, 100, 500);
-    pier(2600, 2790, 100, 560);
-    pier(3330, 2100, 700, 110);
-    // 猫跳板 → 渔船（木质窄板，色调与栈桥一致）
-    m.cat(4280, 960, 44, 420, { c: '#7a5c3c', c2: '#684c30' });
-    m.spr('catArch', 4296, 948);
-    m.spr('pawSign', 4302, 1350);
-    m.spr('boat', 4302, 1480);
-    // 仓库
+    // 栈桥（意见3：泊位向东延伸，停靠岸桥与货轮）
+    pier(4100, 950, 1300, 120);    // 东一泊位（三台岸桥）
+    pier(4900, 1070, 120, 520);    // 东一引桥
+    pier(4100, 2350, 900, 120);    // 东二泊位
+    pier(3300, 3590, 120, 720);    // 南码头
+    pier(1200, 3590, 110, 460);    // 西小码头
+    // 猫跳板 → 渔船（木质窄板，北端接栈桥）
+    m.cat(4930, 1590, 56, 420, { c: '#7a5c3c', c2: '#684c30' });
+    m.spr('catArch', 4946, 1610); m.spr('pawSign', 4952, 1950);
+    m.spr('boat', 4958, 2070);
+    m.cat(4400, 2470, 56, 420, { c: '#7a5c3c', c2: '#684c30' });
+    m.spr('catArch', 4416, 2490); m.spr('pawSign', 4422, 2840);
+    m.spr('boat', 4428, 2960);
+    /* ---- 西北：仓库 + 油罐区（意见2地标：油罐区） ---- */
     m.bld('ware', 200, 180, 620, 340, { padK: 'court' });
     m.bld('ware', 200, 580, 420, 260, { padK: 'court' });
     m.slow('net', 700, 560, 500, 300);
-    // 集装箱阵（中间留出贯通的猫道缝：x1962-2006）
-    const cont = (x, y, key) => { m.stamp(x - 72, y - 62, 144, 66, 1); m.spr(key, x, y); };
-    const rowC = (y, xs) => { for (const [x, k] of xs) cont(x, y, k); };
-    rowC(1260, [[1400, 'contRed'], [1580, 'contBlue'], [1760, 'contGreen'], [2120, 'contRust'], [2300, 'contRed'], [2480, 'contBlue'], [2840, 'contGreen'], [3020, 'contRust']]);
-    rowC(1420, [[1400, 'contBlue'], [1580, 'contRust'], [2120, 'contGreen'], [2300, 'contBlue'], [2660, 'contRed'], [2840, 'contRust'], [3020, 'contBlue']]);
-    rowC(1580, [[1400, 'contGreen'], [1760, 'contBlue'], [2300, 'contRed'], [2480, 'contGreen'], [2660, 'contBlue'], [3020, 'contRed']]);
-    // 集装箱间猫道（缝里只有猫能过；标记都放在真实缺口正中）
-    m.cat(1918, 1200, 44, 440);
-    m.spr('catArch', 1940, 1230);
-    m.spr('pawSign', 1940, 1612);
-    m.cat(2200, 1640, 620, 44);
-    m.spr('pawSign', 2250, 1700); m.spr('catArch', 2790, 1700);
-    // 集装箱双层堆（装饰）
-    m.spr('contRed', 1400, 1198, { sy: 1.5 });
-    m.spr('contBlue', 3020, 1558, { sy: 1.5 });
-    // 鱼市
-    m.spr('stallCyan', 2950, 2320, { solid: 42 });
-    m.spr('stallAmber', 3150, 2320, { solid: 42 });
-    m.spr('stallPink', 2950, 2520, { solid: 42 });
-    m.spr('stallCyan', 3150, 2520, { solid: 42 });
-    m.spr('boxes', 2820, 2640, { solid: 32 });
-    m.flat('puddle', 3060, 2650, 90, 50);
-    m.lamp(2950, 2260, 'lantern'); m.lamp(3150, 2260, 'lantern');
-    // 灯塔岩
-    m.ops.push({ k: 'roundrock', x: 4150, y: 330, r: 150 });
-    m.spr('rock', 4060, 420, { solid: 34 }); m.spr('rock', 4260, 260, { solid: 34 });
-    m.spr('light', 4150, 400, { solid: 60 });
-    m.lamp(4150, 300, 'lamp');
-    // 系船柱 / 堆场
-    for (const by of [400, 700, 1300, 1900, 2500]) m.spr('bollard', 3310, by, { solid: 12 });
-    m.spr('boat', 3560, 700);
-    m.spr('boat', 4150, 2450);
-    m.spr('boxes', 1250, 2050, { solid: 32 });
-    m.spr('boxes', 1450, 2150, { solid: 32 });
-    m.spr('boxes', 620, 1000, { solid: 32 });
-    m.spr('cone', 2400, 1800); m.spr('cone', 2700, 1900);
-    m.flat('puddle', 1900, 2300, 90, 50);
-    m.spr('trash', 900, 1500);
-    // 码头广场（出生点）+ 南侧码头生活区（摊位/泊船/缆桩/网具，避免大片空地）
-    m.ops.push({ k: 'roundcourt', x: 1700, y: 2100, r: 110 });
-    m.spr('stallCyan', 2450, 2260, { solid: 42 });
-    m.spr('stallPink', 2620, 2330, { solid: 42 });
-    m.slow('net', 900, 1850, 380, 240);
-    m.spr('boxes', 1180, 1900, { solid: 32 });
-    m.spr('boxes', 2280, 1900, { solid: 32 });
-    m.spr('boxes', 2620, 2520, { solid: 32 });
-    m.spr('boat', 1050, 2950);
-    m.spr('boat', 2100, 3020);
-    for (const bx of [800, 1150, 1500, 1850, 2200, 2550, 2900, 3200]) m.spr('bollard', bx, 2760, { solid: 12 });
-    m.spr('trash', 1350, 2250);
-    m.spr('cone', 1950, 2350); m.spr('cone', 2820, 2080);
-    m.spr('bike', 1520, 2320);
-    m.flat('puddle', 2050, 2450, 90, 50);
-    m.flat('puddle', 1300, 2050, 90, 50);
-    for (const [lx, ly] of [[3330, 920], [4290, 920], [3330, 2160], [3990, 2160], [2620, 2850], [900, 2740], [1700, 1960], [1400, 2150], [2300, 2200]]) {
-      m.spr('lamp', lx, ly); m.lamp(lx, ly - 40, 'lamp');
+    // 油罐区：五座储油罐（罐体碰撞贴罐壁），西护墙与仓库分隔
+    for (const [tx, ty] of [[1430, 320], [1650, 320], [1430, 560], [1650, 560], [1430, 800]]) {
+      m.spr('oilTank', tx, ty, { solidRect: [150, 100], solidOy: 6 });
     }
-    m.lamp(2450, 2200, 'lantern'); m.lamp(2620, 2270, 'lantern');
+    m.block('wall', 1290, 180, 20, 700);
+    m.spr('cone', 1790, 430); m.spr('cone', 1830, 710);
+    m.spr('boxes', 1930, 870, { solidRect: [60, 44], solidOy: 6 });
+    m.spr('trash', 2100, 880);
+    /* ---- 北：岸桥 + 货车场 + 灯塔岩 ---- */
+    // 岸桥（龙门吊 ×3 加大版，意见2/3地标：门洞可穿行，仅两腿小圆阻挡，碰撞贴柱脚）
+    for (const gx of [4300, 4750, 5200]) m.spr('gantry', gx, 1060, { sx: 1.6, sy: 1.2, pillars: 192, pr: 30, solidOy: 24 });
+    // 远洋货轮（加长版海上装饰大件；水域本身不可通行）
+    m.spr('cargoShip', 5600, 1900, { sx: 1.55, sy: 1.2 });
+    m.spr('cargoShip', 5750, 4200, { sx: 0.9, sy: 0.9 });
+    m.spr('boat', 4600, 3300); m.spr('boat', 5300, 2900);
+    // 北部货车场：车位 + 成排车辆 + 集卡 + 杂物
+    m.ops.push({ k: 'parkline', x: 2150, y: 220, w: 900, h: 120, vert: true, gap: 96 });
+    m.ops.push({ k: 'parkline', x: 2150, y: 400, w: 900, h: 120, vert: true, gap: 96 });
+    for (let i = 0; i < 4; i++) {
+      m.spr(['carAmber', 'carCyan', 'carPink'][i % 3], 2250 + i * 230, 400, { solidRect: [100, 44], solidOy: 6 });
+      m.spr(['carCyan', 'carPink', 'carAmber'][i % 3], 2250 + i * 230, 580, { solidRect: [100, 44], solidOy: 6 });
+    }
+    for (let i = 0; i < 3; i++) m.spr('contTruck', 2280 + i * 340, 790, { solidRect: [250, 60], solidOy: 10 });
+    m.spr('boxes', 2150, 900, { solidRect: [60, 44], solidOy: 6 });
+    m.spr('boxes', 2350, 930, { solidRect: [60, 44], solidOy: 6 });
+    m.spr('boxes', 3200, 760, { solidRect: [60, 44], solidOy: 6 });
+    m.spr('cone', 3100, 520); m.spr('cone', 3160, 800);
+    m.spr('forklift', 3560, 640, { solidRect: [64, 44], solidOy: 10 });
+    // 灯塔岩（东北角：礁盘不可通行）
+    m.ops.push({ k: 'roundrock', x: 3950, y: 330, r: 150 });
+    m.stampCirc(3950, 330, 150, T.BLOCK);
+    m.spr('rock', 3860, 420, { solid: 34, solidOy: 26 }); m.spr('rock', 4060, 260, { solid: 34, solidOy: 26 });
+    m.spr('light', 3950, 400, { solid: 60 });
+    m.lamp(3950, 300, 'lamp');
+    /* ---- 意见3：集装箱堆场（9 个紧贴实心街区排成网格，块间 140~152px 巷道） ----
+       cont: 盖章矩形 [x-70, y-60, 140, 60]（相邻盖章重叠没关系，都是 BLOCK）；
+       yard: 横向间距 133 = 车身可见宽（边贴边 1px 叠压，拼成实心色块）、纵向行距 54 = 车身
+       可见高（前排压住后排 2px，出堆叠层次）；catMid=true 时块中留 40px 猫缝 */
+    const cont = (x, y, key) => { m.stamp(x - 70, y - 60, 140, 60, 1); m.spr(key, x, y); };
+    const CCOL = ['contRed', 'contBlue', 'contGreen', 'contRust', 'contCyan', 'contAmber'];
+    const yard = (x0, y0, rows, catMid, off) => {
+      for (let r = 0; r < rows; r++) for (let c = 0; c < 6; c++) {
+        const cx = x0 + 75 + c * 133 + (catMid && c >= 3 ? 40 : 0);
+        cont(cx, y0 + 60 + r * 54, CCOL[(off + c * 2 + r * 3) % 6]);
+      }
+      if (catMid) {
+        m.cat(x0 + 410, y0, 40, rows * 54);
+        m.spr('catArch', x0 + 430, y0 + 30); m.spr('pawSign', x0 + 430, y0 + rows * 54 - 26);
+      }
+    };
+    // 三排堆场街区（排间 140~152px 巷道；x0 取 9(mod 20) 使首末盖章都与格心对齐）
+    yard(709, 1300, 3, true, 0);   // A
+    yard(1687, 1300, 3, true, 2);  // B
+    yard(2665, 1300, 3, false, 4); // C
+    yard(709, 1620, 3, false, 3);  // D
+    yard(1687, 1620, 3, true, 5);  // E
+    yard(2665, 1620, 3, false, 1); // F
+    yard(709, 1940, 3, false, 2);  // G
+    yard(1687, 1940, 3, false, 4); // H
+    yard(2665, 1940, 3, false, 0); // I
+    // 块边双层/三层堆（不新增阻挡，纯高度层次）
+    m.spr('contGreen', 770, 1330, { sy: 1.5 }); m.spr('contRust', 1440, 1296, { sy: 2 });
+    m.spr('contAmber', 1750, 1330, { sy: 1.5 }); m.spr('contCyan', 2420, 1296, { sy: 2 });
+    m.spr('contBlue', 2730, 1330, { sy: 1.5 }); m.spr('contRed', 3380, 1460, { sy: 1.5 });
+    m.spr('contCyan', 770, 1780, { sy: 1.5 }); m.spr('contGreen', 3380, 1780, { sy: 2 });
+    m.spr('contRed', 1750, 1650, { sy: 2 }); m.spr('contAmber', 2730, 1780, { sy: 1.5 });
+    m.spr('contBlue', 770, 2100, { sy: 1.5 }); m.spr('contGreen', 1750, 2100, { sy: 1.5 }); m.spr('contRust', 2730, 2100, { sy: 2 });
+    // 巷道作业车辆（叉车进竖巷、集卡进横巷）
+    m.spr('forklift', 1617, 1544, { solidRect: [64, 44], solidOy: 10 });
+    m.spr('forklift', 2595, 1864, { solidRect: [64, 44], solidOy: 10 });
+    m.spr('forklift', 1617, 2050, { solidRect: [64, 44], solidOy: 10 });
+    m.spr('contTruck', 1617, 1544, { solidRect: [250, 60], solidOy: 10 });
+    m.spr('contTruck', 2595, 1864, { solidRect: [250, 60], solidOy: 10 });
+    // 岸线：一排集装箱待装船
+    for (let i = 0; i < 14; i++) cont(4110, 1560 + i * 60, CCOL[(i * 5) % 6]);
+    m.spr('forklift', 3860, 1700, { solidRect: [64, 44], solidOy: 10 });
+    m.spr('forklift', 3860, 2060, { solidRect: [64, 44], solidOy: 10 });
+    /* ---- 鱼市（摊位群 + 灯串） ---- */
+    m.spr('stallCyan', 1650, 2520, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallAmber', 1850, 2520, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallPink', 2050, 2520, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallCyan', 2250, 2520, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallAmber', 1750, 2760, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallPink', 1950, 2760, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('boxes', 2250, 2880, { solidRect: [60, 44], solidOy: 6 });
+    m.spr('boxes', 1560, 2880, { solidRect: [60, 44], solidOy: 6 });
+    m.flat('stringLights', 1580, 2580, 760, 56);
+    m.lamp(1650, 2460, 'lantern'); m.lamp(2250, 2460, 'lantern');
+    m.lamp(1750, 2700, 'lantern'); m.lamp(1950, 2700, 'lantern');
+    // 鱼市南排 + 海滨步道杂物（意见2第二轮加密）
+    m.spr('stallAmber', 1650, 2980, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallCyan', 1900, 2980, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallPink', 2150, 2980, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('boxes', 700, 3350, { solidRect: [60, 44], solidOy: 6 });
+    m.spr('boxes', 860, 3420, { solidRect: [60, 44], solidOy: 6 });
+    m.spr('boxes', 2950, 3380, { solidRect: [60, 44], solidOy: 6 });
+    m.spr('cone', 780, 3450); m.spr('cone', 3050, 3430); m.spr('trash', 1750, 3380);
+    m.spr('lamp', 1100, 3420, { solid: 8, solidOy: 4 }); m.lamp(1100, 3380, 'lamp');
+    m.spr('lamp', 2300, 3420, { solid: 8, solidOy: 4 }); m.lamp(2300, 3380, 'lamp');
+    // 码头广场（出生点开阔地带）
+    m.ops.push({ k: 'roundcourt', x: 1600, y: 2320, r: 130 });
+    m.spr('bench', 1420, 2330); m.spr('bench', 1780, 2330);
+    m.spr('boxes', 1200, 2300, { solidRect: [60, 44], solidOy: 6 });
+    m.spr('boxes', 2000, 2300, { solidRect: [60, 44], solidOy: 6 });
+    m.spr('trash', 1350, 2470);
+    m.spr('bike', 1520, 2560);
+    m.spr('cone', 1950, 2420); m.spr('cone', 1300, 2350);
+    /* ---- 西墙根：晒网场与杂物（网具可通行减速） ---- */
+    m.slow('net', 150, 1200, 400, 320);
+    m.spr('boxes', 250, 1650, { solidRect: [60, 44], solidOy: 6 });
+    m.spr('boxes', 420, 1900, { solidRect: [60, 44], solidOy: 6 });
+    m.spr('trash', 350, 1750); m.spr('bike', 300, 1000);
+    m.spr('forklift', 450, 2350, { solidRect: [64, 44], solidOy: 10 });
+    /* ---- 滨海步道：系船柱缆绳 + 拖岸渔船（船体不可穿） ---- */
+    for (let bx = 700; bx <= 3100; bx += 300) m.spr('bollard', bx, 3560, { solid: 12, solidOy: 6 });
+    for (let bx = 700; bx < 3100; bx += 300) m.fill('rope', bx + 14, 3470, 272, 90);
+    m.spr('boat', 1300, 3700, { solidRect: [130, 50], solidOy: 6 });
+    m.spr('boat', 2200, 3720, { solidRect: [130, 50], solidOy: 6 });
+    m.slow('net', 1650, 3630, 380, 140);
+    m.spr('cone', 2450, 3660); m.spr('trash', 2600, 3700);
+    // 岸线系船柱
+    for (let by = 1150; by <= 3350; by += 440) m.spr('bollard', 4210, by, { solid: 12, solidOy: 6 });
+    // 路灯（灯柱=小圆形阻挡）
+    for (const [lx, ly] of [[900, 1210], [2670, 1210], [3990, 1210], [900, 2280], [2670, 2280], [3990, 2280],
+      [3660, 1560], [3660, 2060], [1300, 3420], [2900, 3420], [700, 930], [2100, 930]]) {
+      m.spr('lamp', lx, ly, { solid: 8, solidOy: 4 }); m.lamp(lx, ly - 40, 'lamp');
+    }
     return m;
   }
 
@@ -3648,27 +5008,63 @@ const MAPS = (() => {
   function onsen() {
     const m = new MB({
       id: 'onsen', name: '雪山温泉', emoji: '♨️',
-      desc: '深雪没爪 · 温泉蒸汽 · 竹林兽径',
-      w: 4200, h: 3600, start: { x: 2100, y: 3400 }, // 门洞正中太贴柱，出生在门前参道开阔处
+      desc: '深雪没爪 · 汤坂街市 · 雪见庭园',
+      w: 6400, h: 5400, start: { x: 2100, y: 3400 }, // 门洞正中太贴柱，出生在门前参道开阔处
       base: '#d8e2f0', catGround: '#6a5a44', catGround2: '#5d4e3a', slowMul: 0.5,
       roofs: ['#7c6a74', '#68808e'],
       pv: { 0: '#7a8496', 1: '#575263', 2: '#dfe7f2', 3: '#c98a4a' }
     });
     m.slow('snow', 0, 0, m.w, m.h); // 全图深雪（减速），石径/木台快走
+    // 地面细节层先垫底（雪堆/脚印/冰面，被石径盖住，只显形在雪原上）
+    m.scatter('snowdrift', 140, 140, 6260, 5260, 350, 110);
+    m.scatter('footprint', 2400, 2200, 3100, 3100, 330, 60);
     const stone = (x, y, w2, h2) => { m.stamp(x, y, w2, h2, 0); m.fill('stone', x, y, w2, h2); };
     m.border('rockwall', 60);
-    // 入口 + 参道
+    // 入口 + 参道（意见2第二轮：参道继续南延，汤坂街扩成二丁目小村）
     stone(1800, 3260, 600, 280);
     stone(2050, 700, 110, 2600);
-    m.spr('torii', 2100, 3300, { pillars: 38 }); // 鸟居=门：只挡两柱(±38px)，中央可穿行，勿用 solid 挡门心
+    stone(2050, 3540, 110, 1760);
+    stone(1500, 3620, 1200, 90);      // 汤坂街主路
+    stone(1500, 4280, 1200, 90);      // 汤坂街二丁目
+    m.spr('torii', 2100, 3300, { pillars: 38, solidOy: 8 }); // 鸟居=门：只挡两柱(±38px)，中央可穿行，勿用 solid 挡门心
+    m.spr('torii', 2100, 4160, { sx: 1.5, sy: 1.5, pillars: 56, pr: 24, solidOy: 18 }); // 外大鸟居：柱距柱径随比例放大，碰撞圆贴柱脚
     m.lamp(2100, 3260, 'lantern');
+    m.lamp(2100, 4120, 'lantern');
+    // 汤坂街（门前小村）：汤卖店 / 小吃摊 / 红灯笼
+    m.bld('shop', 1560, 3740, 260, 180, { pad: false, awn: '#e0678f' });
+    m.bld('shop', 2380, 3740, 260, 180, { pad: false, awn: '#4fb3b0' });
+    m.bld('shop', 1560, 4400, 260, 180, { pad: false, awn: '#f0b13c' });
+    m.bld('shop', 2380, 4400, 260, 180, { pad: false, awn: '#8fd982' });
+    m.spr('stallAmber', 1930, 4020, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallCyan', 1930, 4680, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('redLantern', 1560, 3700, { solid: 9, solidOy: 5 }); m.lamp(1560, 3655, 'lantern');
+    m.spr('redLantern', 2640, 3700, { solid: 9, solidOy: 5 }); m.lamp(2640, 3655, 'lantern');
+    m.spr('redLantern', 1560, 4360, { solid: 9, solidOy: 5 }); m.lamp(1560, 4315, 'lantern');
+    m.spr('redLantern', 2640, 4360, { solid: 9, solidOy: 5 }); m.lamp(2640, 4315, 'lantern');
+    m.flat('laundry', 2440, 4620, 150, 86);   // 晒衣架
+    m.flat('laundry', 1720, 4020, 150, 86);
+    m.spr('snowman', 1280, 4560, { solid: 14, solidOy: 6 }); // 雪人
+    m.spr('snowman', 2900, 4080, { solid: 14, solidOy: 6 });
+    m.spr('snowman', 3050, 4880, { solid: 14, solidOy: 6 });
+    m.spr('pineSnow', 1200, 3900, { solid: 20, solidOy: 16 });
+    m.spr('pineSnow', 3000, 3660, { solid: 20, solidOy: 16 });
+    // 竹篱笆围出的小院（意见2第二轮：院门留口）
+    m.block('fence', 2650, 4740, 340, 20);
+    m.block('fence', 2650, 4740, 20, 260);
+    m.block('fence', 2970, 4740, 20, 260);
+    m.block('fence', 2650, 4980, 180, 20);
+    m.block('fence', 2930, 4980, 60, 20);
+    m.spr('bench', 2820, 4860); m.spr('potted', 2720, 4900); m.spr('potted', 2920, 4880);
+    m.spr('boxes', 1420, 4820, { solidRect: [60, 44], solidOy: 6 }); // 木柴堆
+    m.spr('boxes', 1490, 4860, { solidRect: [60, 44], solidOy: 6 });
     // 横径 / 东径 / 西径
     stone(600, 1900, 3000, 100);
     stone(3200, 700, 100, 1300);
     stone(900, 1100, 100, 900);
-    // 温泉旅馆
-    m.bld('inn', 1500, 300, 700, 320, { padK: 'stone' });
-    stone(1500, 620, 700, 90);
+    // 温泉旅馆主楼 + 东别馆（意见2地标：主楼加大）
+    m.bld('inn', 1460, 280, 820, 360, { padK: 'stone' });
+    m.bld('inn', 2380, 320, 400, 300, { padK: 'stone' });
+    stone(1460, 640, 1320, 90);
     // 温泉池（蒸汽）
     m.onsen(2400, 1000, 300, 200);
     m.onsen(2600, 2400, 260, 180);
@@ -3679,38 +5075,89 @@ const MAPS = (() => {
     stone(3300, 1150, 180, 100);
     // 汤田木台
     m.stamp(2450, 1250, 300, 160, 0); m.fill('wood', 2450, 1250, 300, 160);
-    // 竹林（实心）
+    /* ---- 东扩：雪见庭园（意见2地标：雪顶凉亭 + 露天新汤） ---- */
+    stone(3920, 200, 110, 1800);       // 湖东岸径（北接雪原、南接横径东延）
+    stone(4030, 660, 700, 90);         // 凉亭引道
+    m.spr('snowPavilion', 4600, 900, { solidRect: [170, 100], solidOy: 6 }); // 凉亭碰撞贴台基
+    m.onsen(4260, 1340, 260, 170);     // 露天新汤（蒸汽）
+    m.spr('stoneLantern', 4460, 800, { solid: 15, solidOy: 8 }); m.spr('stoneLantern', 4740, 800, { solid: 15, solidOy: 8 });
+    m.lamp(4460, 780, 'lamp'); m.lamp(4740, 780, 'lamp');
+    m.spr('pineSnow', 4180, 940, { solid: 20, solidOy: 16 });
+    m.spr('pineSnow', 4950, 1000, { solid: 20, solidOy: 16 });
+    m.spr('rockSnow', 4200, 500, { solid: 26, solidOy: 18 });
+    m.spr('rockSnow', 4900, 1600, { solid: 26, solidOy: 18 });
+    // 横径东延（贯通到东扩区）
+    stone(3600, 1900, 1440, 100);
+    // 竹林（实心；意见2第二轮：抖动/疏密/大小随机，去方阵感）
     const bambooGrove = (x0, y0, x1, y1) => {
-      for (let gy = y0; gy <= y1; gy += 90) for (let gx = x0; gx <= x1; gx += 90) {
-        const jx = (U.hash2(gx, gy, 11) - 0.5) * 26, jy = (U.hash2(gy, gx, 12) - 0.5) * 26;
-        m.spr('bamboo', gx + jx, gy + jy, { solid: 22 });
+      for (let gy = y0; gy <= y1; gy += 105) for (let gx = x0; gx <= x1; gx += 105) {
+        if (U.hash2(gx, gy, 30) < 0.22) continue; // 疏密不均
+        const jx = (U.hash2(gx, gy, 11) - 0.5) * 68, jy = (U.hash2(gy, gx, 12) - 0.5) * 68;
+        const bs = 0.9 + U.hash2(gx, gy, 13) * 0.2;
+        m.spr('bamboo', gx + jx, gy + jy, { sx: bs, sy: bs, solid: 20, solidOy: 14 }); // 修复:竹林阻挡圆上移，脚下不再多挡一条看不见的雪地
       }
     };
     bambooGrove(3420, 2100, 4080, 3380);
     bambooGrove(160, 2250, 820, 3400);
+    // 意见2：东扩竹林（雪见庭园以南）与西侧竹林南延（填满新增区域）
+    bambooGrove(4100, 2100, 4980, 3380);
+    bambooGrove(160, 3480, 820, 5180);
+    // 意见2第二轮：新汤池群（露天汤手）
+    m.onsen(1300, 2150, 200, 140);
+    m.onsen(2600, 2900, 240, 160);
+    // 雪松群（成群错落，点缀雪原）
+    const pineCluster = (cx, cy, n) => {
+      for (let i = 0; i < n; i++) {
+        const px2 = cx + (U.hash2(cx, cy + i, 31) - 0.5) * 420, py2 = cy + (U.hash2(cy, cx + i, 32) - 0.5) * 300;
+        const ps = 0.9 + U.hash2(px2, py2, 33) * 0.25;
+        m.spr('pineSnow', px2, py2, { sx: ps, sy: ps, solid: 20, solidOy: 16 });
+      }
+    };
+    pineCluster(1220, 900, 5);
+    pineCluster(2650, 900, 5);
+    pineCluster(1750, 2500, 5);
+    pineCluster(4600, 1700, 5);
+    pineCluster(1100, 4700, 5);
+    pineCluster(2400, 4950, 4);
+    // 脚印小径（意见2第二轮：雪地细节）
+    for (const [fx2, fy2] of [[2230, 900], [2230, 1500], [2230, 2500], [2230, 3000], [1600, 2060], [2600, 2060]]) {
+      m.fill('footprint', fx2, fy2, 44, 220);
+    }
+    m.fill('ice', 2450, 2650, 160, 90); m.fill('ice', 1750, 1250, 140, 80); // 冰面补丁
     /* 猫道：竹林兽径 */
     m.cat(3700, 1960, 44, 1420);
     m.spr('catArch', 3722, 2000); m.spr('pawSign', 3722, 3340);
-    m.cat(500, 1960, 44, 1440);
-    m.spr('pawSign', 522, 2000); m.spr('catArch', 522, 3360);
+    m.cat(500, 1960, 44, 2180);      // 西侧兽径南延至新增南区
+    m.spr('pawSign', 522, 2000); m.spr('catArch', 522, 3360); m.spr('pawSign', 522, 4080);
+    m.cat(4500, 2000, 44, 1380);     // 东扩竹林兽径（接横径东延）
+    m.spr('catArch', 4522, 2060); m.spr('pawSign', 4522, 3300);
+    /* ---- 南扩：汤坂街两侧雪原（意见2填充，不留空地） ---- */
+    m.water(1200, 3860, 480, 280);   // 冰池（水面不可过）
+    m.spr('rockSnow', 1140, 3820, { solid: 26, solidOy: 18 }); m.spr('rockSnow', 1740, 4140, { solid: 26, solidOy: 18 });
+    m.spr('pineSnow', 900, 3700, { solid: 20, solidOy: 16 });
+    m.spr('pineSnow', 3450, 4140, { solid: 20, solidOy: 16 });
+    m.spr('rock', 3400, 3700, { solid: 26, solidOy: 18 });
+    m.spr('rockSnow', 3800, 3960, { solid: 26, solidOy: 18 });
+    m.spr('snowPavilion', 3200, 3860, { solidRect: [170, 100], solidOy: 6 }); // 南面第二座雪顶凉亭
+    m.spr('stoneLantern', 3060, 3800, { solid: 15, solidOy: 8 }); m.lamp(3060, 3780, 'lamp');
     // 岩石与雪松
     for (const [rx, ry] of [[2350, 950], [2750, 1150], [2550, 2650], [900, 2550], [1150, 2750], [3150, 1950], [1350, 1000], [2900, 2100]]) {
-      m.spr('rock', rx, ry, { solid: 26 });
+      m.spr('rock', rx, ry, { solid: 26, solidOy: 18 });
     }
     for (const [rx, ry] of [[1300, 300], [2900, 400], [700, 800], [4050, 1550], [1500, 2200], [2450, 3050], [1050, 3050], [4000, 1900]]) {
-      m.spr('rockSnow', rx, ry, { solid: 26 });
+      m.spr('rockSnow', rx, ry, { solid: 26, solidOy: 18 });
     }
     for (const [px, py] of [[500, 400], [1000, 300], [1750, 1100], [2950, 1550], [820, 1500], [2600, 1750], [1200, 2300], [2000, 2650], [3350, 2350], [1550, 3200], [3000, 3200], [2900, 1550]]) {
-      m.spr('pineSnow', px, py, { solid: 24 });
+      m.spr('pineSnow', px, py, { solid: 20, solidOy: 16 }); // 修复:雪松碰撞贴树干，消除南向隐形格
     }
-    // 红灯笼参道
+    // 红灯笼参道（灯柱=小圆形阻挡）
     for (const ly of [900, 1300, 1700, 2100, 2500, 2900]) {
-      m.spr('redLantern', 2170, ly);
+      m.spr('redLantern', 2170, ly, { solid: 9, solidOy: 5 });
       m.lamp(2170, ly - 45, 'lantern');
     }
-    for (const lx of [1560, 2140]) { m.spr('redLantern', lx, 660); m.lamp(lx, 615, 'lantern'); }
+    for (const lx of [1560, 2140]) { m.spr('redLantern', lx, 660, { solid: 9, solidOy: 5 }); m.lamp(lx, 615, 'lantern'); }
     for (const [sx, sy] of [[2020, 1080], [2200, 1080], [2560, 2480], [970, 2660]]) {
-      m.spr('stoneLantern', sx, sy, { solid: 15 });
+      m.spr('stoneLantern', sx, sy, { solid: 15, solidOy: 8 });
       m.lamp(sx, sy - 20, 'lamp');
     }
     return m;
@@ -3720,25 +5167,29 @@ const MAPS = (() => {
   function carnival() {
     const m = new MB({
       id: 'carnival', name: '幽灵游乐园', emoji: '🎡',
-      desc: '废弃乐园 · 过山车 · 马戏帐篷',
-      w: 4600, h: 3400, start: { x: 2300, y: 3180 },
+      desc: '废弃乐园 · 马戏主场 · 过山车环线',
+      w: 6900, h: 5100, start: { x: 2300, y: 3180 },
       base: '#544b68', catGround: '#463d52', catGround2: '#3e3650',
       roofs: ['#7e6e96', '#8a6a76'],
       pv: { 0: '#4a4160', 1: '#2c2438', 2: '#6a5340', 3: '#d9a441' }
     });
     m.fill('plazaWarm', 0, 0, m.w, m.h);
+    // 地面细节层先垫底（地面彩绘/落叶堆/裂缝，只显形在露出的空地上，被树篱边界盖住）
+    m.scatter('chalk', 120, 120, 6780, 4980, 340, 110);
+    m.scatter('leafpile', 120, 120, 6780, 4980, 390, 90);
+    m.scatter('crack', 140, 140, 6760, 4960, 560, 130);
     m.border('hedgeDark', 60);
     const court = (x, y, w2, h2) => m.fill('court', x, y, w2, h2);
     // 入口广场 + 大道
     court(1900, 3000, 800, 340);
     court(2050, 700, 500, 2340);
-    m.spr('stallAmber', 2050, 3220, { solid: 36 });
-    m.spr('stallCyan', 2550, 3220, { solid: 36 });
+    m.spr('stallAmber', 2050, 3220, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallCyan', 2550, 3220, { solidRect: [100, 40], solidOy: 6 });
     m.flat('stringLights', 1980, 3060, 320, 56);
     m.flat('stringLights', 2300, 3060, 320, 56);
     // 旋转木马（地标）
     m.ops.push({ k: 'roundcourt', x: 2300, y: 1560, r: 150 });
-    m.spr('carousel', 2300, 1620, { solid: 112 });
+    m.spr('carousel', 2300, 1620, { solidRect: [216, 88], solidOy: 24 }); // 修复:木马碰撞改矩形贴底盘，南侧广场不再被圆碰撞封掉一大片
     m.lamp(2160, 1420, 'lantern'); m.lamp(2440, 1420, 'lantern');
     m.lamp(2160, 1720, 'lantern'); m.lamp(2440, 1720, 'lantern');
     // 落叶区（减速）——先铺，避免盖到后面的阻挡物
@@ -3753,12 +5204,38 @@ const MAPS = (() => {
     m.bld('funhouse', 660, 900, 480, 380, { padK: 'plazaWarm' });
     m.spr('pawSign', 900, 1320);
     // 过山车轨道（环形闭合，大道开口处做两侧站台；阻挡；两处猫能钻的涵洞）
+    // 修复:轨道宽 64px 但按 20px 格封锁成 80px，两侧各多出一条隐形墙；厚度与端点全部对齐 20px 网格
     const track = (x, y, w2, h2) => m.block('track', x, y, w2, h2);
-    track(1200, 600, 2400, 64);
-    track(3600, 600, 64, 1600);
-    track(2620, 2200, 1044, 64);
-    track(1200, 1400, 64, 864);
-    track(1200, 2200, 820, 64);
+    track(1200, 600, 2400, 60);
+    track(3600, 600, 60, 1600);
+    track(2760, 2200, 900, 60);   // 修复:东段轨道从站台东侧起始，不再被站台贴图盖住末端形成隐形墙
+    track(1200, 1400, 60, 860);
+    track(1200, 2200, 720, 60);   // 修复:西段轨道在站台以西收头，末端不再藏进站台底下
+    /* ---- 东扩：马戏团主场 + 木马大厅（意见2地标） ---- */
+    court(3860, 600, 1440, 1180);      // 环内广场
+    // 过山车东环（意见2：更长的轨道，西侧留 200px 入口）
+    track(3800, 540, 1560, 60);
+    track(5300, 540, 60, 1300);
+    track(4000, 1780, 1360, 60);
+    m.cat(4420, 1740, 120, 140);       // 南轨涵洞（猫道，两端接通）
+    m.spr('catArch', 4480, 1900); m.spr('pawSign', 4480, 1700);
+    // 大马戏团主帐篷（地标：放大到约 520×420）
+    m.spr('bigTop', 4500, 1180, { sx: 1.45, sy: 1.45, solidRect: [435, 261], solidOy: 14 });
+    m.lamp(4330, 1300, 'lantern'); m.lamp(4670, 1300, 'lantern');
+    // 旋转木马大厅（地标：放大到约 440 直径）
+    m.ops.push({ k: 'roundcourt', x: 4980, y: 1480, r: 190 });
+    m.spr('carousel', 4980, 1560, { sx: 1.7, sy: 1.7, solidRect: [367, 150], solidOy: 40 }); // 碰撞随缩放贴底盘
+    m.lamp(4840, 1300, 'lantern'); m.lamp(5120, 1300, 'lantern');
+    // 场内摊贩与彩灯
+    m.spr('popcorn', 4150, 900, { solidRect: [56, 38], solidOy: 6 });
+    m.spr('balloonCart', 4150, 1500, { solidRect: [60, 40], solidOy: 6 });
+    m.flat('stringLights', 3950, 780, 420, 56);
+    m.flat('stringLights', 4700, 780, 420, 56);
+    for (let i = 0; i < 3; i++) m.spr(['stallPink', 'stallCyan', 'stallAmber'][i % 3], 4050 + i * 200, 660, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('ticket', 5150, 700, { solidRect: [52, 60], solidOy: 10 });
+    for (let i = 0; i < 2; i++) { m.spr('bench', 3990, 1250 + i * 160); m.spr('bench', 5210, 1250 + i * 160); }
+    m.spr('trash', 4250, 1700); m.spr('cone', 5200, 900); m.spr('cone', 3900, 1000);
+    m.spr('trash', 3990, 1700); m.flat('puddle', 5200, 1700, 90, 50);
     // 大道开口两侧的小站台
     m.fill('wood', 1930, 2140, 110, 190);
     m.fill('wood', 2634, 2140, 110, 190);
@@ -3771,44 +5248,114 @@ const MAPS = (() => {
       m.spr('bollard', px, py);
     }
     // 游艺摊位一排
-    m.spr('balloonCart', 2620, 1200, { solid: 30 });
-    m.spr('popcorn', 2620, 1500, { solid: 30 });
-    m.spr('stallPink', 2620, 1900, { solid: 42 });
-    m.spr('stallCyan', 2620, 2060, { solid: 42 });
+    m.spr('balloonCart', 2620, 1200, { solidRect: [60, 40], solidOy: 6 });
+    m.spr('popcorn', 2620, 1500, { solidRect: [56, 38], solidOy: 6 }); // 修复:售卖车碰撞改矩形贴贴图
+    m.spr('stallPink', 2620, 1900, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallCyan', 2620, 2060, { solidRect: [100, 40], solidOy: 6 });
     m.lamp(2620, 1140, 'lantern'); m.lamp(2620, 1440, 'lantern');
-    // 碰碰车场（围栏开一口，能进去打；南移避开过山车南轨）
-    m.block('fence', 1200, 2320, 400, 22);
-    m.block('fence', 1200, 2598, 130, 22);
-    m.block('fence', 1470, 2598, 130, 22);
-    m.block('fence', 1200, 2320, 22, 300);
-    m.block('fence', 1578, 2320, 22, 300);
+    // 碰碰车场（围栏开一口，能进去打；南移避开过山车南轨）——修复:围栏对齐 20px 网格，栏杆外不再有隐形格
+    m.block('fence', 1200, 2320, 400, 20);
+    m.block('fence', 1200, 2600, 130, 20);
+    m.block('fence', 1470, 2600, 130, 20);
+    m.block('fence', 1200, 2320, 20, 300);
+    m.block('fence', 1580, 2320, 20, 300);
     court(1222, 2342, 356, 256);
     m.spr('carPink', 1320, 2500, { sx: 0.55, sy: 0.55 });
     m.spr('carCyan', 1480, 2440, { sx: 0.55, sy: 0.55 });
-    // 破喷泉（岩石堆）
+    // 破喷泉（岩石堆）——修复:岩石盘此前只画不挡（看得走过不去的反向问题），补上实际阻挡
     m.ops.push({ k: 'roundrock', x: 2300, y: 2560, r: 60 });
-    m.spr('rock', 2300, 2590, { solid: 30 });
+    m.stampCirc(2300, 2560, 60, T.BLOCK);
+    m.spr('rock', 2300, 2590, { solid: 30, solidOy: 20 });
     // 马戏帐篷阵（实心 + 帐篷缝猫道）
-    m.spr('tentRed', 4000, 2600, { solid: 66 });
-    m.spr('tentPurple', 4230, 2860, { solid: 66 });
-    m.spr('tentTeal', 4020, 3060, { solid: 66 });
-    m.cat(4100, 2380, 44, 940);
-    m.spr('catArch', 4122, 2420); m.spr('pawSign', 4122, 3280);
+    m.spr('tentRed', 4000, 2600, { solidRect: [128, 86], solidOy: 6 });
+    m.spr('tentPurple', 4230, 2860, { solidRect: [128, 86], solidOy: 6 });
+    m.spr('tentTeal', 4020, 3060, { solidRect: [128, 86], solidOy: 6 });
+    m.cat(4100, 2380, 44, 1760);     // 帐篷阵兽径（南延贯通新增南区）
+    m.spr('catArch', 4122, 2420); m.spr('pawSign', 4122, 3280); m.spr('pawSign', 4122, 3680);
     // 帐篷阵以西补些内容（气球车/摊位/灯），避免东侧空旷
-    m.spr('balloonCart', 3620, 2980, { solid: 30 });
-    m.spr('stallAmber', 3660, 2560, { solid: 42 });
-    m.spr('lamp', 3560, 2740); m.lamp(3560, 2700, 'lantern');
+    m.spr('balloonCart', 3620, 2980, { solidRect: [60, 40], solidOy: 6 });
+    m.spr('stallAmber', 3660, 2560, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('lamp', 3560, 2740, { solid: 8, solidOy: 4 }); m.lamp(3560, 2700, 'lantern');
     m.spr('trash', 3900, 3200);
     m.spr('cone', 3560, 2900);
     m.flat('puddle', 3780, 2880, 90, 50);
+    // 轨道沿线补点彩灯与杂物（原有区域加密）
+    m.flat('stringLights', 1300, 700, 420, 56);
+    m.flat('stringLights', 2400, 700, 420, 56);
+    m.spr('trash', 1700, 900); m.spr('cone', 3000, 800);
+    m.spr('balloonCart', 3200, 1950, { solidRect: [60, 40], solidOy: 6 });
+    m.slow('leaves', 2600, 1200, 320, 220);
+    /* ---- 南扩：入口大街延长 + 南市集（意见2填充） ---- */
+    court(2050, 3340, 500, 560);       // 大道南延
+    m.flat('stringLights', 2080, 3420, 440, 56);
+    m.spr('stallPink', 1700, 3560, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallAmber', 2900, 3560, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('balloonCart', 1850, 3760, { solidRect: [60, 40], solidOy: 6 });
+    m.spr('popcorn', 2750, 3760, { solidRect: [56, 38], solidOy: 6 });
+    m.spr('lamp', 2040, 3560, { solid: 8, solidOy: 4 }); m.lamp(2040, 3520, 'lamp');
+    m.spr('lamp', 2560, 3560, { solid: 8, solidOy: 4 }); m.lamp(2560, 3520, 'lamp');
+    // 南侧破旧帐篷二连
+    m.spr('tentPurple', 3950, 3620, { solidRect: [128, 86], solidOy: 6 });
+    m.spr('tentTeal', 4300, 3660, { solidRect: [128, 86], solidOy: 6 });
+    m.spr('trash', 4150, 3820); m.spr('cone', 3800, 3700);
+    m.flat('puddle', 4450, 3800, 90, 50);
+    // 西南落叶市集
+    m.slow('leaves', 300, 3450, 1100, 450);
+    m.spr('stallCyan', 700, 3700, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallAmber', 1000, 3700, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('bike', 1250, 3800); m.flat('puddle', 500, 3800, 90, 50);
+    m.spr('trash', 1450, 3550); m.spr('cone', 550, 3600);
+    /* ---- 东二列：停车场 + 游艺街 + 座椅草坪（意见2第二轮填充） ---- */
+    court(5560, 300, 1240, 1400);
+    for (let r2 = 0; r2 < 2; r2++) {
+      m.ops.push({ k: 'parkline', x: 5620, y: 420 + r2 * 260, w: 1060, h: 120, vert: true, gap: 96 });
+      for (let i = 0; i < 8; i++) m.spr(['carPink', 'carCyan', 'carAmber'][i % 3], 5700 + i * 130, 540 + r2 * 260, { solidRect: [100, 44], solidOy: 6 });
+    }
+    m.spr('vending', 5640, 1600, { solidRect: [44, 68], solidOy: 6 });
+    m.spr('trash', 6600, 1620);
+    for (let i = 0; i < 5; i++) m.spr(['stallPink', 'stallCyan', 'stallAmber'][i % 3], 5650 + i * 230, 1900, { solidRect: [100, 40], solidOy: 6 });
+    m.flat('stringLights', 5600, 1960, 1100, 56);
+    m.spr('ticket', 5620, 2160, { solidRect: [52, 60], solidOy: 10 });
+    m.spr('popcorn', 5900, 2170, { solidRect: [56, 38], solidOy: 6 });
+    m.spr('balloonCart', 6150, 2170, { solidRect: [60, 40], solidOy: 6 });
+    for (let i = 0; i < 4; i++) { m.spr('lamp', 5700 + i * 300, 2400, { solid: 8, solidOy: 4 }); m.lamp(5700 + i * 300, 2360, 'lamp'); }
+    m.spr('trash', 6600, 1950); m.spr('cone', 6600, 2300);
+    court(5560, 2600, 1240, 1200);
+    m.flat('stringLights', 5650, 2700, 1000, 56);
+    for (let i = 0; i < 3; i++) { m.spr('bench', 5800 + i * 300, 2820); m.spr('bench', 5800 + i * 300, 2970); }
+    m.spr('balloonCart', 6100, 3300, { solidRect: [60, 40], solidOy: 6 });
+    m.spr('ticket', 6350, 3460, { solidRect: [52, 60], solidOy: 10 });
+    m.spr('trash', 5800, 3600); m.spr('cone', 6400, 3060);
+    m.flat('puddle', 5900, 3550, 90, 50);
+    /* ---- 南二排：摊位街延长 + 帐篷营（意见2第二轮填充） ---- */
+    court(2050, 3900, 500, 1050);      // 大道再南延至新边界
+    m.flat('stringLights', 2080, 4180, 440, 56);
+    m.spr('stallPink', 1750, 4310, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallCyan', 1750, 4530, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallAmber', 2850, 4310, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('stallCyan', 2850, 4530, { solidRect: [100, 40], solidOy: 6 });
+    m.spr('ticket', 1900, 4750, { solidRect: [52, 60], solidOy: 10 });
+    m.spr('balloonCart', 2800, 4750, { solidRect: [60, 40], solidOy: 6 });
+    m.spr('lamp', 2040, 4310, { solid: 8, solidOy: 4 }); m.lamp(2040, 4270, 'lamp');
+    m.spr('lamp', 2560, 4310, { solid: 8, solidOy: 4 }); m.lamp(2560, 4270, 'lamp');
+    m.slow('leaves', 300, 4150, 1000, 700);
+    m.spr('tentPurple', 500, 4400, { solidRect: [128, 86], solidOy: 6 });
+    m.spr('tentRed', 900, 4700, { solidRect: [128, 86], solidOy: 6 });
+    m.spr('trash', 1300, 4400); m.spr('cone', 600, 4800);
+    court(3900, 4200, 1300, 700);      // 东南马戏中场
+    m.spr('tentTeal', 4300, 4520, { solidRect: [128, 86], solidOy: 6 });
+    m.spr('tentPurple', 4750, 4620, { solidRect: [128, 86], solidOy: 6 });
+    m.spr('popcorn', 5100, 4520, { solidRect: [56, 38], solidOy: 6 });
+    m.spr('trash', 5000, 4740); m.spr('cone', 4050, 4700);
+    m.flat('stringLights', 3950, 4300, 1200, 56);
     // 摩天轮底座 + 支柱（远景装饰感）
     m.ops.push({ k: 'roundcourt', x: 700, y: 2600, r: 120 });
     m.spr('bollard', 640, 2600); m.spr('bollard', 760, 2600);
-    m.spr('balloonCart', 700, 2760, { solid: 30 });
-    // 路灯与彩灯
-    for (const ly of [1000, 1500, 2000, 2500, 2900]) {
-      m.spr('lamp', 2090, ly); m.lamp(2090, ly - 40, 'lamp');
-      m.spr('lamp', 2510, ly + 200); m.lamp(2510, ly + 160, 'lamp');
+    m.spr('balloonCart', 700, 2760, { solidRect: [60, 40], solidOy: 6 });
+    // 路灯与彩灯（灯柱=小圆形阻挡）
+    for (const ly of [1000, 1500, 2000, 2500, 2900, 3400]) {
+      m.spr('lamp', 2090, ly, { solid: 8, solidOy: 4 }); m.lamp(2090, ly - 40, 'lamp');
+      m.spr('lamp', 2510, ly + 200, { solid: 8, solidOy: 4 }); m.lamp(2510, ly + 160, 'lamp');
     }
     m.flat('stringLights', 2050, 900, 500, 56);
     m.flat('stringLights', 2050, 1900, 500, 56);
@@ -3835,7 +5382,7 @@ const MAPS = (() => {
     }
   };
   return {
-    T, CELL, list: [endless, ...list], defaultId: 'oldtown',
+    T, CELL, sprites: S, list: [endless, ...list], defaultId: 'oldtown', // sprites: 供工具读取精灵视觉尺寸
     get(id) { return list.find(m => m.id === id) || null; },
     glow() {
       if (!glowCache) glowCache = {
@@ -4662,57 +6209,6 @@ const DATA = (() => {
 })();
 
 ;
-/* 喵都幸存者 - 📜更新日志数据（玩家在游戏内「更新日志」面板看到的版本记录）
-   ── 发新版本时的维护流程 ──
-   ① 把 index.html 里所有脚本的 ?v= 缓存号升一位（如 20260908b → 20260908c）
-   ② 运行 node tools/gen-changelog.js：自动把上次之后的 git 提交整理成一条新日志
-      （或 node tools/gen-changelog.js --title "标题" "新增：xxx" "修复：yyy" 手写条目）
-   ③ 条目措辞面向玩家：说清「改了什么、现在怎么样了」即可，不写内部实现与具体数值
-   条目按时间新→旧排列；items.t 类型：new 新增 / opt 优化 / bal 平衡 / fix 修复 */
-'use strict';
-const CHANGELOG = {
-  /* 工具记账：已收录到哪个提交（gen-changelog.js 维护，请勿手改） */
-  lastCommit: 'ed359e8d1902676ab1b3de2b8a5701a1f8a8d7cd',
-  entries: [
-    {
-      date: "2026-09-09", version: "20260908e", title: "🗺️ 专属BGM×怪物脾性×缩放加速！", items: [
-        { t: 'new', text: "画面缩放！对局中点右上角🔍按钮（或按 - / = 键）从 1X 一路放大到 4X——4X 就是之前的大画面，档位会记住" },
-        { t: 'new', text: "游戏加速！对局中点⏩按钮或按 1 / 2 / 3，最高 3 倍速，刷图不再干等" },
-        { t: 'new', text: "六张地图各有专属背景音乐了：老城夜市、樱花公园、港湾码头、雪山温泉、幽灵游乐园、无尽街区风格各不相同" },
-        { t: 'new', text: "怪物们更有脾气——三花姐会蓄力突进、鸽子隔空吐羽毛、浣熊爱扑抢地上的鱼干、蜗牛身后留下黏液拖慢你，见招拆招！" },
-        { t: 'bal', text: "精英不再必掉宝箱：大约一半掉宝箱、一半掉金币；幸运锦鲤能明显提高宝箱概率（批次头目必掉宝箱不变）" },
-        { t: 'fix', text: "雪山温泉开局可能被鸟居卡住的问题——现在出生在门前空地，四方向都能走；顺带把另外两张图挡在门心的隐形墙也拆了" },
-        { t: 'opt', text: "更新日志面板可以上下滚动翻阅了" },
-      ]
-    },
-    {
-      date: "2026-09-08", version: "20260908d", title: "头目卡墙修复！", items: [
-        { t: 'fix', text: "修复了批次头目可能被楼房卡住、一直追不上主角，导致波次迟迟无法结束的问题——被卡住的头目会自动抄近路追上来" },
-        { t: 'fix', text: "开宝箱的精英敌人同样不会再被建筑卡住，都能正常追上主角了" },
-      ]
-    },
-    {
-      date: "2026-09-08", version: "20260908c", title: "📜 更新日志上线！", items: [
-        { t: 'new', text: "新增「更新日志」面板：主菜单随时查看每次更新的内容，有新版本时进入游戏会自动提醒" },
-      ]
-    },
-    {
-      date: "2026-09-08", version: "20260908a", title: "手机、平板适配！", items: [
-        { t: 'fix', text: "修复了在手机和平板上游玩时画面大小异常的问题，横屏、竖屏都能正常显示了" },
-      ]
-    },
-    {
-      date: "2026-09-07", version: "20260907", title: "《喵都幸存者》正式开服！", items: [
-        { t: 'new', text: "游戏上线！带领大橘迎战无尽鼠潮：每轮 15 分钟、4 个批次头目，第 3 轮讨伐压轴 Boss「老鼠妈妈」" },
-        { t: 'new', text: "六张夜巡地图任选：老城夜市 / 樱花公园 / 港湾码头 / 雪山温泉 / 幽灵游乐园 / 无尽街区" },
-        { t: 'new', text: "8 种武器 + 8 种被动自由构筑，武器满级后开宝箱可触发进化；70 级解锁可无限叠加的猫爪印" },
-        { t: 'new', text: "地形与养成玩法齐备：草地深雪会拖慢脚步、🐾 猫道只有你能钻，精英出没、宝箱掉落，走位与构筑缺一不可" },
-      ]
-    },
-  ],
-};
-
-;
 /* 喵都幸存者 - 统一结算面板（成功/失败共用）+ 战报分享图（Canvas 绘制 → PNG 下载） */
 'use strict';
 const Result = (() => {
@@ -4739,8 +6235,52 @@ const Result = (() => {
     return d;
   }
 
+  /* 大橘横幅：结算面板顶部的 #over-cat（index.html 新增画布）。
+     成功（含讨伐老鼠妈妈）= 站姿 idle[0]，失败 = 躺平 dead；上下浮动交给 CSS catbob 动画 */
+  function drawOverCat(d) {
+    const cv = $('over-cat');
+    if (!cv || !Art.playerFrames) return;
+    const cat = d.win ? Art.playerFrames.idle[0] : Art.playerFrames.dead;
+    if (!cat) return;
+    cv.width = cat.width; cv.height = cat.height; // 画布贴帧原生尺寸，CSS 显示 96px，像素不糊
+    const x = cv.getContext('2d');
+    x.imageSmoothingEnabled = false;
+    x.clearRect(0, 0, cv.width, cv.height);
+    x.drawImage(cat, 0, 0);
+  }
+
+  /* 数据格小图标：每格配一枚已有像素图标（像素模式读 manifest 键 / 原版矢量回退读 art.js 键） */
+  const STAT_ICONS = {
+    'st-round': ['paw', 'paw'],         // 到达轮次 · 爪印足迹
+    'st-time': ['alarm', 'clock'],      // 本局时长 · 小闹钟
+    'st-lv': ['bell', 'bell'],          // 等级 · 铃铛
+    'st-kill': ['claw', 'claw'],        // 打跑敌人 · 猫爪
+    'st-gold': ['coin', 'coin'],        // 金币
+    'st-dmg': ['dmg', 'stampDmg'],      // 总伤害 · 锐爪印
+    'st-dps': ['zap', 'zap'],           // 平均 DPS · 静电
+    'st-peak': ['crit', 'stampCrit']    // 最高秒伤 · 会心印
+  };
+  function statIcon(id, keys) {
+    const box = $(id);
+    if (!box) return;
+    let c = box.querySelector('canvas.sico');
+    if (!c) {
+      c = document.createElement('canvas');
+      c.className = 'sico';
+      box.insertBefore(c, box.firstChild);
+    }
+    const icon = Art.icons && (Art.icons[keys[0]] || Art.icons[keys[1]]);
+    if (!icon) return;
+    c.width = 44; c.height = 44;
+    const x = c.getContext('2d');
+    x.imageSmoothingEnabled = true;
+    x.clearRect(0, 0, 44, 44);
+    x.drawImage(icon, 0, 0, 44, 44);
+  }
+
   function open(d) {
     last = d;
+    drawOverCat(d);
     // 标题与文案：收工 / 失败倒下 / 讨伐老鼠妈妈，共用同一布局
     if (d.mother) {
       $('over-title').textContent = '🐭 老鼠妈妈已讨伐！';
@@ -4769,6 +6309,7 @@ const Result = (() => {
     $('st-dmg').textContent = U.fmtNum(d.dmgTotal);
     $('st-dps').textContent = U.fmtNum(d.dps);
     $('st-peak').textContent = U.fmtNum(d.peakSec);
+    for (const [id, keys] of Object.entries(STAT_ICONS)) statIcon(id, keys);
     // 构筑清单：武器（进化显示进化图标）/ 被动 / 猫爪印
     const W = DATA.WEAPONS, P = DATA.PASSIVES, S = DATA.STAMP_META;
     const bw = $('bchips-w'); bw.innerHTML = '';
@@ -4806,7 +6347,7 @@ const Result = (() => {
   function drawBadge(x, bx, by, txt, bg, fg) {
     x.font = '900 22px ' + FONT;
     const w = Math.max(42, x.measureText(txt).width + 20);
-    fillRR(x, bx - w, by, w, 34, 17, bg, '#fff', 3);
+    fillRR(x, bx - w, by, w, 34, 17, bg, '#453244', 3);
     x.fillStyle = fg || '#fff';
     x.textAlign = 'center'; x.textBaseline = 'middle';
     x.fillText(txt, bx - w / 2, by + 18);
@@ -4815,16 +6356,16 @@ const Result = (() => {
     const S = 78;
     const stamp = kind === 'stamp', evo = kind === 'evo';
     x.save();
-    if (evo) { x.shadowColor = 'rgba(255,125,170,.85)'; x.shadowBlur = 18; }
+    if (evo) { x.shadowColor = 'rgba(224,86,86,.85)'; x.shadowBlur = 18; }
     const g = x.createLinearGradient(0, cy, 0, cy + S);
     g.addColorStop(0, stamp ? '#fff6df' : '#fffdf6');
     g.addColorStop(1, stamp ? '#ffe9bd' : '#ffefd6');
-    fillRR(x, cx, cy, S, S, 18, g, evo ? '#ff7daa' : stamp ? '#e8b96a' : '#ffd9a0', 5);
+    fillRR(x, cx, cy, S, S, 20, g, '#453244', 4); // VI v2.2：chip 描边统一墨线
     x.restore();
     x.drawImage(icon, cx + 10, cy + 9, 60, 60);
     if (badgeTxt != null) {
-      const bg = stamp ? '#f0b13c' : evo ? '#ff7daa' : '#ff8fb5';
-      const fg = stamp ? '#5c3a08' : '#fff';
+      const bg = stamp ? '#f0b13c' : evo ? '#e05656' : '#ff8fb5';
+      const fg = stamp ? '#453244' : '#fff6e0';
       drawBadge(x, cx + S + 12, cy + S - 20, badgeTxt, bg, fg);
     }
   }
@@ -4876,21 +6417,21 @@ const Result = (() => {
     x.drawImage(Art.glows.lamp, W - 300, groundY - 150, 250, 250);
     x.restore();
 
-    /* ---- 面板底 + 猫耳 + 大橘 ---- */
-    fillRR(x, panelX + 4, panelTop + 16, panelW, panelH, 34, 'rgba(40,24,60,.30)');
+    /* ---- 面板底 + 猫耳 + 大橘（VI v2.2：蛋壳渐变 + 墨线 + 内奶白描边） ---- */
+    fillRR(x, panelX + 6, panelTop + 18, panelW, panelH, 36, 'rgba(30,20,30,.32)');
     const pg = x.createLinearGradient(0, panelTop, 0, panelBot);
-    pg.addColorStop(0, '#fffdf6'); pg.addColorStop(1, '#ffefd6');
-    fillRR(x, panelX, panelTop, panelW, panelH, 30, pg, '#ffd9a0', 6);
+    pg.addColorStop(0, '#fffdf6'); pg.addColorStop(1, '#f2e8d8');
+    fillRR(x, panelX, panelTop, panelW, panelH, 34, pg, '#453244', 6);
     x.save();
-    x.strokeStyle = '#fff'; x.lineWidth = 4;
-    Art.rr(x, panelX + 8, panelTop + 8, panelW - 16, panelH - 16, 24); x.stroke();
+    x.strokeStyle = '#fff6e0'; x.lineWidth = 4;
+    Art.rr(x, panelX + 8, panelTop + 8, panelW - 16, panelH - 16, 27); x.stroke();
     x.restore();
     // 猫耳
     for (const side of [-1, 1]) {
       x.save();
       x.translate(side < 0 ? panelX + 148 : panelX + panelW - 148, panelTop - 4);
       x.rotate(side < 0 ? -0.42 : Math.PI * 0.63);
-      fillRR(x, -22, -22, 44, 44, 14, '#ffefd6', '#ffd9a0', 5);
+      fillRR(x, -22, -22, 44, 44, 14, '#f2e8d8', '#453244', 5);
       x.restore();
     }
     // 大橘（成功站姿 / 失败躺平），趴在面板右上角
@@ -4911,7 +6452,7 @@ const Result = (() => {
     x.fillText('🌙 喵都幸存者 · 夜巡战报', W / 2, y + 17);
     y += 34;
     x.font = '900 58px ' + FONT;
-    x.fillStyle = d.mother ? '#a44fc9' : d.win ? '#e2637f' : '#5b4a44';
+    x.fillStyle = d.mother ? '#a44fc9' : d.win ? '#e05656' : '#453244';
     x.fillText(d.mother ? '🐭 老鼠妈妈已讨伐！' : d.win ? '🎉 收工大吉！' : '😿 大橘累倒了…', W / 2, y + 37);
     y += 74;
     x.font = '400 27px ' + FONT;
@@ -4930,10 +6471,12 @@ const Result = (() => {
     const gap = 18, cellW = (innerW - gap * 3) / 4, cellH = 112;
     stats.forEach((st, i) => {
       const cx = innerX + (i % 4) * (cellW + gap), cy = y + Math.floor(i / 4) * (cellH + 16);
-      fillRR(x, cx, cy, cellW, cellH, 20, '#fff', '#ffe1b0', 4);
+      const cg = x.createLinearGradient(0, cy, 0, cy + cellH);
+      cg.addColorStop(0, '#fffdf6'); cg.addColorStop(1, '#ffefd6');
+      fillRR(x, cx, cy, cellW, cellH, 22, cg, '#453244', 3);
       x.textAlign = 'center';
       x.font = '900 40px ' + FONT;
-      x.fillStyle = '#e2637f';
+      x.fillStyle = '#e05656';
       x.fillText(st[0], cx + cellW / 2, cy + 42);
       x.font = '400 22px ' + FONT;
       x.fillStyle = '#96806f';
@@ -4941,7 +6484,9 @@ const Result = (() => {
     });
     y += 242 + 26;
     // 构筑清单
-    fillRR(x, innerX, y, innerW, buildH, 20, '#fff', '#ffe1b0', 4);
+    const bg2 = x.createLinearGradient(0, y, 0, y + buildH);
+    bg2.addColorStop(0, '#fffdf6'); bg2.addColorStop(1, '#fff6e0');
+    fillRR(x, innerX, y, innerW, buildH, 22, bg2, '#453244', 3);
     x.font = '700 30px ' + FONT;
     x.fillStyle = '#c47b1e'; x.textAlign = 'left';
     x.fillText('🐾 本局构筑', innerX + 30, y + 32);
@@ -5000,6 +6545,92 @@ const Result = (() => {
 })();
 
 ;
+/* 喵都幸存者 - 📜更新日志数据（玩家在游戏内「更新日志」面板看到的版本记录）
+   ── 发新版本时的维护流程 ──
+   ① 把 index.html 里所有脚本的 ?v= 缓存号升一位（如 20260908b → 20260908c）
+   ② 运行 node tools/gen-changelog.js：自动把上次之后的 git 提交整理成一条新日志
+      （或 node tools/gen-changelog.js --title "标题" "新增：xxx" "修复：yyy" 手写条目）
+   ③ 条目措辞面向玩家：说清「改了什么、现在怎么样了」即可，不写内部实现与具体数值
+   条目按时间新→旧排列；items.t 类型：new 新增 / opt 优化 / bal 平衡 / fix 修复 */
+'use strict';
+const CHANGELOG = {
+  /* 工具记账：已收录到哪个提交（gen-changelog.js 维护，请勿手改） */
+  lastCommit: '9d72df366a50918f98dcbd4f3077b678a44c3bd0',
+  entries: [
+    {
+      date: "2026-09-09", version: "20260909d", title: "⏸️ 暂停面板直达 音效/缩放/加速！", items: [
+        { t: 'opt', text: "「休息一下」暂停面板新增一行三钮：🔊音效开关、🔍画面缩放、⏩游戏加速，与「继续夜巡」「重新开始」同层并排，点一下就切换，不用再进平衡设置里找（平衡设置回归纯配置抽屉）" },
+      ]
+    },
+    {
+      date: "2026-09-09", version: "20260909c", title: "🎰 开箱狂欢 × 地图大扩建！", items: [
+        { t: 'new', text: "开宝箱变身老虎机！奖励逐个滚动落定，稀有奖励金光加身，抽中大奖更是彩纸烟花全屏齐飞，还有一群毛色各异的猫围上来蹦跳欢呼～中途可随时点「跳过」直接收下" },
+        { t: 'new', text: "金币抽奖庆祝大升级！抽中大额经验现在分四级热闹：星星爆→彩纸→号角震屏→80%头奖全屏金光+喵声合奏，越稀有越燃！" },
+        { t: 'new', text: "五张夜巡地图全面扩建，面积接近翻倍前水准：老城钟楼与跨街牌坊、樱花神社与放生池石桥、码头龙门吊与远洋货轮、温泉旅馆别馆与汤坂街、马戏团大帐篷与旋转木马大厅全都登场" },
+        { t: 'new', text: "港湾码头集装箱堆场大扩容！近百个六色集装箱排成四大堆场区，巷道纵横如迷宫，还藏了好几条猫咪专属捷径" },
+        { t: 'opt', text: "地图元素大丰富也更讲道理：草地沙滩落叶能走但会拖慢脚程、水面围墙绝对翻不过、树干灯柱油罐撞得明明白白——看着能过就能过，看着过不去就绕道" },
+        { t: 'opt', text: "设置抽屉顶部新布局：🔊音效、🔍缩放、⏩加速三个按钮并排一行，样式统一单击即切" },
+        { t: 'opt', text: "对局中右上角的⚙齿轮不再出现（暂停菜单里照样能开平衡设置），战斗画面更清爽" },
+      ]
+    },
+    {
+      date: "2026-09-09", version: "20260909b", title: "✨ 可爱像素 2.2：更圆更萌，顺手清掉隐形墙!", items: [
+        { t: 'new', text: "画面缩放和加速搬进 ⚙ 设置里啦：点一下就循环切换（缩放 1X→2X→4X、加速 1X→2X→3X），再也不会卡在最大档下不来" },
+        { t: 'new', text: "磁铁道具换上经典马蹄磁铁造型，头顶还吸着小鱼干，一眼就懂；烟花道具重画成点燃的窜天火箭——捡到就知道要清屏啦！" },
+        { t: 'opt', text: "全界面「可爱像素」换新装：面板长回了猫耳朵、按钮变回圆滚滚的胶囊，升级卡片、战报结算、设置抽屉全面萌化，设置入口也换成和等级徽章一样大的圆形齿轮" },
+        { t: 'opt', text: "小鱼干、金币、牛奶等掉落物按原版比例放大重绘，捡起来更醒目了" },
+        { t: 'opt', text: "玩法说明瘦身到一屏内：入门操作+最终目标一眼看完，其余乐趣自己探索；更新日志面板改成固定高度上下滚动翻看，滚轮、拖动都行" },
+        { t: 'fix', text: "全面清理「看着能走却撞墙」的隐形墙：旋转木马与过山车轨道旁、集装箱和摊位边、停车场车位间，看着开阔的地方现在真的能走" },
+      ]
+    },
+    {
+      date: "2026-09-09", version: "20260909a", title: "🐱 全游戏像素化重制!", items: [
+        { t: 'new', text: "整个游戏换上「奶油团子」像素新装:大橘、9 种敌怪、鼠王、老鼠妈妈、武器弹幕、道具宝箱、六张地图全部重绘" },
+        { t: 'new', text: "界面文字换成像素字体,菜单、面板、结算都是原汁原味的像素味" },
+        { t: 'opt', text: "主菜单、按钮、卡片、标签全面改版:直角边框 + 硬阴影,主行动按钮一律项圈红" },
+        { t: 'opt', text: "地面、楼房、水域整体像素化,夜色灯光下的角色更突出了" },
+        { t: 'fix', text: "像素素材万一加载失败,会自动回退到原来的画面,不影响开局" },
+      ]
+    },
+    {
+      date: "2026-09-09", version: "20260908e", title: "🗺️ 专属BGM×怪物脾性×缩放加速！", items: [
+        { t: 'new', text: "画面缩放！对局中点右上角🔍按钮（或按 - / = 键）从 1X 一路放大到 4X——4X 就是之前的大画面，档位会记住" },
+        { t: 'new', text: "游戏加速！对局中点⏩按钮或按 1 / 2 / 3，最高 3 倍速，刷图不再干等" },
+        { t: 'new', text: "六张地图各有专属背景音乐了：老城夜市、樱花公园、港湾码头、雪山温泉、幽灵游乐园、无尽街区风格各不相同" },
+        { t: 'new', text: "怪物们更有脾气——三花姐会蓄力突进、鸽子隔空吐羽毛、浣熊爱扑抢地上的鱼干、蜗牛身后留下黏液拖慢你，见招拆招！" },
+        { t: 'bal', text: "精英不再必掉宝箱：大约一半掉宝箱、一半掉金币；幸运锦鲤能明显提高宝箱概率（批次头目必掉宝箱不变）" },
+        { t: 'fix', text: "雪山温泉开局可能被鸟居卡住的问题——现在出生在门前空地，四方向都能走；顺带把另外两张图挡在门心的隐形墙也拆了" },
+        { t: 'opt', text: "更新日志面板可以上下滚动翻阅了" },
+      ]
+    },
+    {
+      date: "2026-09-08", version: "20260908d", title: "头目卡墙修复！", items: [
+        { t: 'fix', text: "修复了批次头目可能被楼房卡住、一直追不上主角，导致波次迟迟无法结束的问题——被卡住的头目会自动抄近路追上来" },
+        { t: 'fix', text: "开宝箱的精英敌人同样不会再被建筑卡住，都能正常追上主角了" },
+      ]
+    },
+    {
+      date: "2026-09-08", version: "20260908c", title: "📜 更新日志上线！", items: [
+        { t: 'new', text: "新增「更新日志」面板：主菜单随时查看每次更新的内容，有新版本时进入游戏会自动提醒" },
+      ]
+    },
+    {
+      date: "2026-09-08", version: "20260908a", title: "手机、平板适配！", items: [
+        { t: 'fix', text: "修复了在手机和平板上游玩时画面大小异常的问题，横屏、竖屏都能正常显示了" },
+      ]
+    },
+    {
+      date: "2026-09-07", version: "20260907", title: "《喵都幸存者》正式开服！", items: [
+        { t: 'new', text: "游戏上线！带领大橘迎战无尽鼠潮：每轮 15 分钟、4 个批次头目，第 3 轮讨伐压轴 Boss「老鼠妈妈」" },
+        { t: 'new', text: "六张夜巡地图任选：老城夜市 / 樱花公园 / 港湾码头 / 雪山温泉 / 幽灵游乐园 / 无尽街区" },
+        { t: 'new', text: "8 种武器 + 8 种被动自由构筑，武器满级后开宝箱可触发进化；70 级解锁可无限叠加的猫爪印" },
+        { t: 'new', text: "地形与养成玩法齐备：草地深雪会拖慢脚步、🐾 猫道只有你能钻，精英出没、宝箱掉落，走位与构筑缺一不可" },
+      ]
+    },
+  ],
+};
+
+;
 /* 喵都幸存者 · 小游戏版 Canvas UI 层
    H5 版的菜单/三选一/宝箱/暂停/结算/帮助/更新日志都是 HTML 覆盖层，小游戏没有 DOM——
    这里用同一套绘本风格在主画布上重建全部界面。
@@ -5007,7 +6638,7 @@ const Result = (() => {
    main 在每帧渲染末尾调用 MUI.draw()，触摸事件先经 MUI.touch()（界面吃掉就不给摇杆）。 */
 'use strict';
 const MUI = (() => {
-  const FONT = '"ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+  const FONT = '"Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif'; // 像素字体由 adapter wx.loadFont 注册
   const TAU = Math.PI * 2;
 
   /* ---------- 运行时（init 注入） ---------- */
@@ -5061,6 +6692,13 @@ const MUI = (() => {
     rr(x, bx, by, bw, bh, bh / 2);
     x.lineWidth = 3; x.strokeStyle = hot ? '#e0678f' : '#4fb3b0'; x.stroke();
     x.font = '700 ' + Math.round(bh * 0.48) + 'px ' + FONT;
+    /* 长文案自动缩字（如「📷 保存战报」在窄按钮上会溢出）：逐号缩小到按钮内宽为止 */
+    let btnFs = bh * 0.48;
+    const btnMaxW = bw - 14;
+    while (btnFs > 10 && x.measureText(label).width > btnMaxW) {
+      btnFs -= 1;
+      x.font = '700 ' + Math.round(btnFs) + 'px ' + FONT;
+    }
     x.textAlign = 'center'; x.textBaseline = 'middle';
     x.lineWidth = 4; x.strokeStyle = 'rgba(60,30,20,.2)';
     x.strokeText(label, bx + bw / 2, by + bh / 2 + 1);
@@ -5540,11 +7178,14 @@ const MUI = (() => {
     if (screen) return; // 覆盖层打开时不画 HUD 角落按钮
     const r2 = Math.max(18, Math.min(24, vh * 0.055));
     const cx = vw - r2 - 8;
+    /* 顶部按钮组起点：默认 16%h；真机时避让微信胶囊（__CAPSULE 已是虚拟坐标） */
+    const capTop = (typeof __CAPSULE !== 'undefined' && __CAPSULE) ? __CAPSULE.bottom + r2 + 8 : 0;
+    const hudTop = Math.max(vh * 0.16, capTop);
     const defs = [
-      { icon: '⏸', fn: cb.pause, dy: vh * 0.16 },
-      { icon: '🔍', sub: zoomLv, fn: cb.cycleZoom, dy: vh * 0.16 + (r2 + 6) },
-      { icon: '⏩', sub: speedLv, fn: cb.cycleSpeed, dy: vh * 0.16 + (r2 + 6) * 2 },
-      { icon: cb.muted() ? '🔇' : '🔊', fn: cb.toggleMute, dy: vh * 0.16 + (r2 + 6) * 3 }
+      { icon: '⏸', fn: cb.pause, dy: hudTop },
+      { icon: '🔍', sub: zoomLv, fn: cb.cycleZoom, dy: hudTop + (r2 + 6) },
+      { icon: '⏩', sub: speedLv, fn: cb.cycleSpeed, dy: hudTop + (r2 + 6) * 2 },
+      { icon: cb.muted() ? '🔇' : '🔊', fn: cb.toggleMute, dy: hudTop + (r2 + 6) * 3 }
     ];
     for (const d2 of defs) {
       const cy = d2.dy + r2;
@@ -5648,11 +7289,13 @@ const MUI = (() => {
   /* ================= 画布与视口 ================= */
   const cv = __platform.screenCanvas(); // 适配层：wx.createCanvas 首调即屏幕画布
   const ctx = cv.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
   let vw = 0, vh = 0, dpr = 1, vignette = null;
   let zoom = 1, worldW = 0, worldH = 0; // 世界层缩放：小屏缩小世界保证视野；worldW/H 为可视范围对应的世界尺寸
   /* 意见1（第三版）：整体缩放档位。1X = 当前视野（小屏优先保证可视范围）；4X = 旧版大小
-     （视野 4 倍化改版前的角色尺寸，即世界缩放 ×2，按档位在 1X~4X 间线性过渡）。 */
-  const ZOOM_LV = [1, 2, 3, 4];
+     （视野 4 倍化改版前的角色尺寸，即世界缩放 ×2，档位在 1X~4X 间线性过渡）。
+     意见3（第五版）：档位精简为 1→2→4 三档循环；悬浮钮移入 ⚙ 设置抽屉。 */
+  const ZOOM_LV = [1, 2, 4];
   let userZoom = U.storage.get('meow_zoom', 1);
   if (!ZOOM_LV.includes(userZoom)) userZoom = 1;
   /* 意见2（第三版）：游戏加速档位 1X/2X/3X（只作用游戏逻辑时间，演出与菜单不受影响） */
@@ -5660,8 +7303,8 @@ const MUI = (() => {
   let gameSpeed = U.storage.get('meow_speed', 1);
   if (!SPD_LV.includes(gameSpeed)) gameSpeed = 1;
   function resize() {
-    dpr = Math.min(2, window.devicePixelRatio || 1);
-    vw = window.innerWidth; vh = window.innerHeight;
+    dpr = __platform.virtual.dpr;
+    vw = __platform.virtual.vw; vh = __platform.virtual.vh;
     MUI.setViewport(vw, vh);
     if (vw < 2 || vh < 2) return; // 旋转/分屏切换瞬间 innerWidth 可能短暂为 0，等下一帧自愈检查再量
     // 意见6：整体视野 = 原来的 4 倍（2 倍宽 × 2 倍高）→ 世界缩放减半，
@@ -5672,10 +7315,10 @@ const MUI = (() => {
     worldW = vw / zoom; worldH = vh / zoom;
     cv.width = Math.round(vw * dpr); cv.height = Math.round(vh * dpr);
     // 关键：CSS 显示尺寸必须与渲染用的 vw/vh 同步，否则 canvas 会按属性尺寸(=视口×dpr)显示
-    cv.style.width = vw + 'px'; cv.style.height = vh + 'px';
+    cv.style.width = __platform.sys.windowWidth + 'px'; cv.style.height = __platform.sys.windowHeight + 'px';
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     vignette = document.createElement('canvas');
-    vignette.width = vw; vignette.height = vh;
+    vignette.width = Math.max(1, Math.round(vw)); vignette.height = Math.max(1, Math.round(vh));
     const vx = vignette.getContext('2d');
     const g = vx.createRadialGradient(vw / 2, vh / 2, Math.min(vw, vh) * 0.42, vw / 2, vh / 2, Math.hypot(vw, vh) * 0.62);
     g.addColorStop(0, 'rgba(8,8,28,0)');
@@ -5691,7 +7334,9 @@ const MUI = (() => {
 
   // 小游戏版：无 DOM，界面全部走 MUI（Canvas 覆盖层）
 
-  /* ================= 缩放 / 加速档位控制 ================= */
+  /* ================= 缩放 / 加速档位 / 音效开关 ================= */
+  /* 单一真源：档位与静音只在 main.js 的 setZoom/setSpeed/toggleMuted 里改；变化经 updateToggleBtns 广播
+     meow-toggles 事件，config_panel.js 监听它刷新暂停面板的三钮文字（音效/缩放/加速与「继续夜巡」同级）。 */
   function updateToggleBtns() { MUI.setZoomLv(userZoom + 'X'); MUI.setSpeedLv(gameSpeed + 'X'); }
   function setZoom(lv) {
     if (!ZOOM_LV.includes(lv) || lv === userZoom) return;
@@ -5701,8 +7346,10 @@ const MUI = (() => {
     if (G.state !== 'menu') banner('🔍 画面缩放 ' + lv + 'X' + (lv === 4 ? '（旧版大小）' : ''), 1.5);
     updateToggleBtns();
   }
+  // 取模循环（修复旧版 U.clamp 夹到端点后点不动的卡死）：1 → 2 → 4 → 1；dir=-1 反向
   function cycleZoom(dir) {
-    setZoom(ZOOM_LV[U.clamp(ZOOM_LV.indexOf(userZoom) + dir, 0, ZOOM_LV.length - 1)]);
+    const i = ZOOM_LV.indexOf(userZoom);
+    setZoom(ZOOM_LV[((i < 0 ? 0 : i) + dir + ZOOM_LV.length) % ZOOM_LV.length]);
   }
   function setSpeed(lv) {
     if (!SPD_LV.includes(lv)) return;
@@ -5711,9 +7358,17 @@ const MUI = (() => {
     if (G.state === 'play') banner('⏩ 游戏速度 ' + lv + 'X', 1.5);
     updateToggleBtns();
   }
+  // 单击循环 1X → 2X → 3X → 1X（⚙ 设置抽屉与快捷键共用）
+  function cycleSpeed() { setSpeed(SPD_LV[(SPD_LV.indexOf(gameSpeed) + 1) % SPD_LV.length]); }
+  // 音效开关在暂停面板三钮一行（与 🔍 缩放 / ⏩ 加速同级；从平衡设置抽屉移出）；
+  // M 快捷键与面板按钮共用同一真源，按钮文字不在这里直接改，统一走 updateToggleBtns 广播刷新
+  function toggleMuted() {
+    Sfx.setMuted(!Sfx.isMuted());
+    updateToggleBtns();
+  }
 
   /* ================= 城市地图（无限网格，chunk 缓存） ================= */
-  const CHUNK = 512, ROAD = 96, SIDEWALK = 22, CHUNK_PAD = 48;
+  const CHUNK = 512, ROAD = 96, SIDEWALK = 22, CHUNK_PAD = 48, PIX = 4;
   let curMap = null; // 手工地图（MAPS 里的固定面积地图）；null = 经典无限街区
   const chunkCache = new Map();
   function blockType(cx, cy) {
@@ -5725,10 +7380,13 @@ const MUI = (() => {
   }
   function genChunk(cx, cy) {
     const PAD = CHUNK_PAD, S = CHUNK + PAD * 2;
+    const PIX = 4; // 地形低清烘焙：整个世界 1/4 分辨率，像素化
     const c = document.createElement('canvas');
-    c.width = S; c.height = S;
+    c.width = S / PIX; c.height = S / PIX;
     const x = c.getContext('2d');
+    x.imageSmoothingEnabled = false;
     x.lineJoin = 'round'; x.lineCap = 'round';
+    x.scale(1 / PIX, 1 / PIX);
     x.translate(PAD, PAD);
     const lamps = [], signs = [];
     const bx = cx * CHUNK, by = cy * CHUNK;
@@ -5894,7 +7552,7 @@ const MUI = (() => {
   });
   window.addEventListener('keyup', e => { keys[e.code] = false; });
   // 触摸摇杆
-  const IS_TOUCH = 'ontouchstart' in window; // 手机/平板：提示文案与桌面不同
+  const IS_TOUCH = true; // 小游戏版：纯触屏，提示文案固定手机版
   const joy = { on: false, id: -1, ox: 0, oy: 0, x: 0, y: 0 };
   cv.addEventListener('touchstart', e => {
     onAnyInput();
@@ -6262,6 +7920,17 @@ const MUI = (() => {
     for (let i = 0; i < n; i++) {
       const a = U.rand(0, TAU), s = U.rand(40, 160);
       part({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 40, life: U.rand(0.3, 0.6), size: U.rand(3, 6), col, kind: 'star', grav: 300 });
+    }
+  }
+  // 彩纸（金币抽奖 ≥10% 大奖庆祝）：多彩小星屑向上抛洒再洒落
+  function confettiAt(x, y) {
+    const cols = ['#ffd34d', '#ff8fb5', '#8fe08a', '#9fd8f2', '#e2b7ff'];
+    let n = 18;
+    if (G.parts.length > FX.particleLodAt) n = Math.ceil(n / 2); // 粒子过载时生成量减半（LOD）
+    for (let i = 0; i < n; i++) {
+      const a = U.rand(-Math.PI, 0); // 上半圆：全部往上抛
+      const s = U.rand(60, 200);
+      part({ x: x + U.rand(-12, 12), y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: U.rand(0.5, 0.95), size: U.rand(3, 5.5), col: U.pick(cols), kind: 'star', grav: 260 });
     }
   }
   function heartAt(x, y) { part({ x, y, vy: -46, life: 1.1, size: 7, col: '#ff8fb5', kind: 'heart' }); }
@@ -7330,13 +8999,38 @@ const MUI = (() => {
     const need = DATA.xpNeed(G.player.lv || 1);
     const v = Math.max(1, Math.round(need * pct));
     addXp(v);
-    if (pct >= 0.10) {
-      // ≥10%：金币大奖式演出（数值直达，演出加强）
+    const pc = Math.round(pct * 100);
+    // 世界层特效只在实际游戏画面播（宝箱金币位走宝箱面板自己的联动演出，世界层只留粒子/飘字，恢复后立刻可见）
+    const inWorld = G.state === 'play';
+    if (pct >= 0.80) {
+      // ≥80%：最高规格——烟花 + 全屏金光 + 震屏 + 群猫欢呼迷你版
+      popStars(x, y, '#ffd34d', 26);
+      part({ x, y, life: 0.9, size: 70, col: '#ffd34d', kind: 'ring' });
+      goldFloat(x, y - 18, '💥 ' + pc + '% 经验大奖 +' + v);
+      if (inWorld) {
+        G.flash = 0.55; addShake(10, true);
+        Sfx.sfx.firework(); Sfx.sfx.fanfare(true); Sfx.sfx.meowChoir();
+        worldCelebrate();
+      }
+    } else if (pct >= 0.30) {
+      // ≥30%：接近头奖——短 fanfare + 震屏 + 彩纸
+      popStars(x, y, '#ffd34d', 20);
+      confettiAt(x, y - 6);
+      part({ x, y, life: 0.8, size: 60, col: '#ffd34d', kind: 'ring' });
+      goldFloat(x, y - 16, '✨ ' + pc + '% 经验 +' + v);
+      if (inWorld) { addShake(6, true); Sfx.sfx.fanfare(false); }
+    } else if (pct >= 0.10) {
+      // ≥10%：金币大奖式演出（数值直达，演出加强 + 彩纸）
       popStars(x, y, '#ffd34d', 18);
+      confettiAt(x, y - 6);
       part({ x, y, life: 0.7, size: 55, col: '#ffd34d', kind: 'ring' });
-      goldFloat(x, y - 16, (Math.round(pct * 100)) + '% 经验 +' + v);
-      Sfx.sfx.chest();
-      if (pct >= 0.80) { G.flash = 0.35; addShake(8, true); Sfx.sfx.firework(); }
+      goldFloat(x, y - 16, pc + '% 经验 +' + v);
+      if (inWorld) Sfx.sfx.rareDing();
+    } else if (pct >= 0.05) {
+      // ≥5%：低概率大额经验——星星爆 + 金色飘字升级 + 专属「叮咚」
+      popStars(x, y, '#ffe9a8', 12);
+      goldFloat(x, y - 15, '⭐ ' + pc + '% 经验 +' + v);
+      if (inWorld) Sfx.sfx.dingDong();
     } else {
       goldFloat(x, y - 14, '+' + v);
     }
@@ -7457,7 +9151,232 @@ const MUI = (() => {
     heartAt(PP.x + 12 * (PP.flip ? -1 : 1), PP.y - 42);
   }
 
-  /* ================= 宝箱 ================= */
+  /* ================= 宝箱（老虎机式开箱演出） ================= */
+  /* 演出会话令牌：每场演出（开箱 / 金币头奖）++fxTok；所有 setTimeout 回调触发前先核对令牌，
+     「跳过 / 收下 / 下一场」都会作废旧令牌并清空定时器——游戏恢复 play 后绝无残留回调乱触发。 */
+  let fxTok = 0;
+  const fxTimers = new Set();
+  function fxLater(tok, ms, fn) {
+    const t = setTimeout(() => { fxTimers.delete(t); if (tok === fxTok) fn(); }, ms);
+    fxTimers.add(t);
+  }
+  function fxTimersClear() { for (const t of fxTimers) clearTimeout(t); fxTimers.clear(); }
+  // 彻底收摊：作废回调 + 停庆祝层 +（若挂在 body）送回宝箱面板
+  function fxStopAll() {
+    fxTok++;
+    fxTimersClear();
+    chestFx.on = false;
+    if (chestFx.timer) { clearTimeout(chestFx.timer); chestFx.timer = null; }
+    chestFx.parts.length = 0; chestFx.cats.length = 0; chestFx.flash = 0; chestFx.rays = 0;
+    if (chestFx.cv && chestFx.cv.className) chestFxMount(false);
+  }
+  /* ---- 庆祝覆盖层（#chest-fx）：彩纸/烟花/金光/群猫欢呼全画在这层 canvas 上，
+          指针穿透、纯装饰，不碰游戏世界的渲染循环。宝箱态挂在 #screen-chest 里；
+          金币头奖（≥80%）时临时挂到 body 播「迷你版」。setTimeout 链独立驱动
+          （state='chest' 时主循环不推进世界，演出层自己走节拍）。 ---- */
+  const chestFx = { cv: null, cx: null, on: false, timer: null, t: 0, parts: [], cats: [], rays: 0, flash: 0 };
+  const CONF_COLS = ['#ffd34d', '#ff8fb5', '#8fe08a', '#9fd8f2', '#e2b7ff', '#fff6d8'];
+  function chestFxMount(world) {
+    const cv = chestFx.cv || (chestFx.cv = $('chest-fx'));
+    if (!cv) return;
+    const parent = world ? document.body : $('screen-chest');
+    if (parent && parent.appendChild && cv.parentNode !== parent) parent.appendChild(cv); // 浏览器=移动节点 / 桩环境=安全空操作
+    cv.className = world ? 'world' : '';
+    cv.width = window.innerWidth; cv.height = window.innerHeight;
+    chestFx.cx = cv.getContext('2d');
+  }
+  // 一颗烟花：爆出一圈彩色火星 + 轻微金闪
+  function chestFxBoom() {
+    const fx = chestFx, w = fx.cv.width, h = fx.cv.height;
+    const bx = U.rand(0.2, 0.8) * w, by = U.rand(0.15, 0.45) * h;
+    for (let i = 0; i < 26; i++) {
+      const a = (i / 26) * TAU, s = U.rand(120, 260);
+      fx.parts.push({ kind: 'spark', x: bx, y: by, vx: Math.cos(a) * s, vy: Math.sin(a) * s, col: U.pick(CONF_COLS), t: 0, life: U.rand(0.5, 0.9), r: U.rand(2.5, 4.5) });
+    }
+    fx.flash = Math.max(fx.flash, 0.25);
+  }
+  // 启动一场庆祝：level 1=稀有（金闪+星星） / 2=大奖（彩纸横扫+金光+烟花三连+群猫欢呼）
+  function chestFxStart(level) {
+    const fx = chestFx;
+    fx.on = true; fx.t = 0;
+    fx.flash = Math.max(fx.flash, level >= 2 ? 0.6 : 0.35);
+    const w = fx.cv.width, h = fx.cv.height;
+    if (level >= 1) { // 稀有起：从面板宝箱位置炸开一蓬金色星星
+      for (let i = 0; i < 22; i++) {
+        const a = U.rand(0, TAU), s = U.rand(80, 240);
+        fx.parts.push({ kind: 'spark', x: w / 2, y: h * 0.32, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 60, col: U.pick(['#ffd34d', '#fff6d8', '#ffe9a8']), t: 0, life: U.rand(0.5, 0.9), r: U.rand(2, 4) });
+      }
+    }
+    if (level >= 2) {
+      fx.rays = 2.4; // 金光加速旋转时长（秒）
+      // 全屏彩纸横扫：左右两股对吹
+      for (let i = 0; i < 80; i++) {
+        const left = i % 2 === 0;
+        fx.parts.push({ kind: 'conf', x: left ? -20 : w + 20, y: Math.random() * h * 0.7,
+          vx: (left ? 1 : -1) * U.rand(160, 420), vy: U.rand(-260, -60), rot: U.rand(0, TAU), vr: U.rand(-9, 9),
+          w2: U.rand(6, 11), h2: U.rand(4, 8), col: U.pick(CONF_COLS), t: 0, life: U.rand(1.2, 2.2) });
+      }
+      // 群猫欢呼：底部一排 6 只换色小猫（烘焙 2 帧轮播 + 随机相位蹦跳，绝不每帧重绘 drawCat）
+      fx.cats.length = 0;
+      for (let i = 0; i < 6; i++) {
+        fx.cats.push({ i: i % Art.cheer.length, x: w * (0.5 + (i - 2.5) * 0.09), ph: U.rand(0, TAU), scale: U.rand(0.8, 1.1) });
+      }
+      const tok = fxTok; // 烟花三连（跟随当前演出会话，跳过即作废）
+      for (let i = 0; i < 3; i++) fxLater(tok, 150 + i * 320, chestFxBoom);
+    }
+    if (!fx.timer) chestFxLoop();
+  }
+  function chestFxLoop() {
+    const fx = chestFx;
+    if (!fx.on) { fx.timer = null; return; }
+    fx.timer = setTimeout(chestFxLoop, 33);
+    const c = fx.cx; if (!c) return;
+    const dt = 1 / 30, w = fx.cv.width, h = fx.cv.height;
+    fx.t += dt;
+    fx.flash = Math.max(0, fx.flash - dt * 1.6);
+    fx.rays = Math.max(0, fx.rays - dt);
+    for (let i = fx.parts.length - 1; i >= 0; i--) {
+      const p = fx.parts[i]; p.t += dt;
+      if (p.t >= p.life) { fx.parts.splice(i, 1); continue; }
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      if (p.kind === 'conf') { p.vy += 320 * dt; p.vx *= 1 - dt * 1.2; p.rot += p.vr * dt; } // 彩纸：受重力飘落
+      else { p.vy += 170 * dt; p.vx *= 1 - dt * 1.6; p.vy *= 1 - dt * 1.6; } // 火星：爆开减速坠落
+    }
+    c.clearRect(0, 0, w, h);
+    // 金光加速旋转（大奖限定）
+    if (fx.rays > 0) {
+      c.save(); c.translate(w / 2, h * 0.42); c.rotate(fx.t * (fx.rays > 1 ? 5 : 2.2));
+      c.globalAlpha = Math.min(0.42, fx.rays * 0.2);
+      c.fillStyle = 'rgba(255,214,90,.55)';
+      const R = Math.hypot(w, h) * 0.7;
+      for (let i = 0; i < 12; i++) {
+        c.rotate(TAU / 12);
+        c.beginPath(); c.moveTo(0, 0); c.arc(0, 0, R, -0.09, 0.09); c.closePath(); c.fill();
+      }
+      c.restore();
+    }
+    // 粒子：彩纸片 / 烟花火星 / 欢呼星星
+    for (const p of fx.parts) {
+      c.save(); c.globalAlpha = Math.max(0, 1 - p.t / p.life);
+      if (p.kind === 'conf') {
+        c.translate(p.x, p.y); c.rotate(p.rot); c.fillStyle = p.col;
+        c.fillRect(-p.w2 / 2, -p.h2 / 2, p.w2, p.h2);
+      } else {
+        c.fillStyle = p.col; c.beginPath(); c.arc(p.x, p.y, p.r, 0, TAU); c.fill();
+      }
+      c.restore();
+    }
+    // 群猫欢呼：帧轮播 + 相位蹦跳，蹦跳时偶尔冒星星
+    for (const ct of fx.cats) {
+      const jump = Math.sin(fx.t * 9 + ct.ph);
+      const size = 64 * ct.scale;
+      const y = h - size * 0.62 - Math.max(0, jump) * 16;
+      c.drawImage(Art.cheer[ct.i][jump > 0 ? 1 : 0], ct.x - size / 2, y, size, size);
+    }
+    if (fx.cats.length && Math.random() < dt * 6) {
+      const ct = U.pick(fx.cats);
+      fx.parts.push({ kind: 'spark', x: ct.x + U.rand(-20, 20), y: h - 90, vx: U.rand(-30, 30), vy: U.rand(-140, -60), col: U.pick(['#ffd34d', '#ff8fb5']), t: 0, life: 0.8, r: 3 });
+    }
+    // 全屏金光闪
+    if (fx.flash > 0) {
+      c.globalAlpha = Math.min(0.7, fx.flash); c.fillStyle = '#fff6d8';
+      c.fillRect(0, 0, w, h); c.globalAlpha = 1;
+    }
+  }
+  // 金币头奖（≥80%）世界层迷你庆祝：庆祝层临时挂 body，播完自动收摊（指针穿透不挡操作）
+  function worldCelebrate() {
+    return; // 小游戏版：金币头奖庆祝层依赖 DOM 覆盖层，禁用（世界层粒子/飘字不受影响）
+    fxTok++; fxTimersClear(); // 新的一场：作废旧演出残留
+    chestFxMount(true);
+    const tok = fxTok;
+    chestFxStart(2);
+    fxLater(tok, 2400, () => { if (tok === fxTok) fxStopAll(); });
+  }
+  /* ---- 老虎机滚动：所有奖励行的窗口 canvas 共用一条 tick 链，逐个落定为真奖励 ---- */
+  let chestRolls = [];      // 当前宝箱的滚动行 {el,ctx,icon,tier,kind,done}
+  let chestShowLevel = 0;   // 本箱整体演出规格：0 普通 / 1 稀有 / 2 大奖
+  let chestUiWired = false; // 「跳过/收下」按钮的演出清理监听只补挂一次
+  let slotIconPool = null;  // 滚动时随机闪过的图标池（惰性构建）
+  function chestRollTick(tok) {
+    if (tok !== fxTok) return;
+    let rolling = false;
+    for (const r of chestRolls) if (!r.done) rolling = true;
+    if (!rolling) return;
+    if (!slotIconPool) slotIconPool = Object.keys(Art.icons).map(k => Art.icons[k]).concat([Art.items.coin, Art.items.gem3]);
+    const icv = U.pick(slotIconPool);
+    for (const r of chestRolls) {
+      if (r.done) continue;
+      r.ctx.clearRect(0, 0, 88, 88);
+      r.ctx.drawImage(icv, 0, 0, 88, 88); // 滚动就是滚着玩的：真实奖励数据早已结算
+    }
+    Sfx.sfx.slotTick();
+    fxLater(tok, 55, () => chestRollTick(tok));
+  }
+  // 单行落定：定格真奖励 + 弹跳亮起 + 定音「哐当」；稀有/大奖行另有金光与「叮！」
+  function chestSettleRow(tok, r) {
+    if (tok !== fxTok || r.done) return;
+    r.done = true;
+    $('chest-icon').classList.remove('suspense'); // 首行落定即解除悬念摇晃
+    r.ctx.clearRect(0, 0, 88, 88);
+    r.ctx.drawImage(r.icon, 0, 0, 88, 88);
+    r.el.classList.remove('rolling');
+    r.el.classList.add('landed');
+    if (r.tier >= 3) r.el.classList.add('big');
+    else if (r.tier === 2) r.el.classList.add('rare');
+    Sfx.sfx.slotStop();
+    if (r.tier >= 3) {
+      chestFx.flash = Math.max(chestFx.flash, 0.5);
+      Sfx.sfx.rareDing();
+      if (r.kind === 'evo') Sfx.sfx.evolve(); // 进化音效挪到进化行落定的瞬间，更带感
+    } else if (r.tier === 2) {
+      chestFx.flash = Math.max(chestFx.flash, 0.35);
+      Sfx.sfx.rareDing();
+    } else if (r.tier === 1) {
+      Sfx.sfx.dingDong();
+    }
+  }
+  // 演出收尾：按整体规格加码（大奖=彩纸横扫+金光+烟花+震屏+群猫欢呼+强 fanfare；稀有=金闪+琶音）
+  function chestFinishShow(tok) {
+    if (tok !== fxTok || G.state !== 'chest') return;
+    $('chest-icon').classList.remove('suspense');
+    $('chest-rays').classList.remove('rays-fast');
+    const btn = $('btn-chest-ok');
+    btn.textContent = '开心收下！';
+    btn.classList.remove('skip');
+    if (chestShowLevel >= 2) {
+      chestFxStart(2);
+      $('chest-rays').classList.add('rays-gold');
+      $('chest-title').classList.add('super');
+      $('chest-panel').classList.add('quake');
+      fxLater(tok, 620, () => $('chest-panel').classList.remove('quake'));
+      Sfx.sfx.fanfare(true);
+      Sfx.sfx.meowChoir();
+    } else if (chestShowLevel === 1) {
+      chestFxStart(1); // 金色闪光 + 星星粒子
+      Sfx.sfx.fanfare(false); // 喇叭琶音
+    }
+  }
+  // 提前收下（=跳过演出）：立刻定格所有行 + 收掉全部演出回调与画面。数据早已结算，绝不卡玩家
+  function chestSkipAll() {
+    fxStopAll();
+    $('chest-icon').classList.remove('suspense');
+    $('chest-rays').classList.remove('rays-fast', 'rays-gold');
+    $('chest-panel').classList.remove('quake');
+    $('chest-title').classList.remove('super');
+    for (const r of chestRolls) { // 没落定的行直接定格成真奖励（纯补画面）
+      if (!r.done) {
+        r.done = true;
+        r.ctx.clearRect(0, 0, 88, 88);
+        r.ctx.drawImage(r.icon, 0, 0, 88, 88);
+        r.el.classList.remove('rolling');
+        r.el.classList.add('landed');
+      }
+    }
+    chestRolls = [];
+    const btn = $('btn-chest-ok');
+    btn.textContent = '开心收下！';
+    btn.classList.remove('skip');
+  }
   function openChest(isMother) {
     G.state = 'chest';
     const P = G.player;
@@ -7855,7 +9774,7 @@ const MUI = (() => {
         const ch = getChunk(cx, cy);
         const sx = Math.floor(cx * CHUNK - ch.pad - G.cam.x);
         const sy = Math.floor(cy * CHUNK - ch.pad - G.cam.y);
-        ctx.drawImage(ch.canvas, sx, sy);
+        ctx.drawImage(ch.canvas, sx, sy, ch.canvas.width * PIX, ch.canvas.height * PIX);
         for (const l of ch.lamps) if (l.x > camL && l.x < camR && l.y > camT && l.y < camB) lamps.push(l);
       }
     }
@@ -7863,6 +9782,16 @@ const MUI = (() => {
     if (curMap) {
       curMap.drawDecor(ctx, camL, camT, camR, camB, w2sx, w2sy);
       curMap.drawFx(ctx, G.time, w2sx, w2sy, camL, camT, camR, camB, G.cam.x, G.cam.y);
+      // ?debug=1 碰撞可视化：BLOCK 格画红色半透明块，核对视觉障碍与实际碰撞一致（地图调试用）
+      if (/[?&]debug=1/.test(location.search)) {
+        ctx.fillStyle = 'rgba(255,32,64,.5)';
+        for (let gy = 0; gy < curMap.gh; gy++) for (let gx = 0; gx < curMap.gw; gx++) {
+          if (curMap.grid[gy * curMap.gw + gx] !== MAPS.T.BLOCK) continue;
+          const bx0 = gx * MAPS.CELL - G.cam.x, by0 = gy * MAPS.CELL - G.cam.y;
+          if (bx0 < -halfW - 90 || by0 < -halfH - 90 || bx0 > halfW + 90 || by0 > halfH + 90) continue;
+          ctx.fillRect(bx0, by0, MAPS.CELL, MAPS.CELL);
+        }
+      }
     }
     const P = G.player;
     // ---- 区域（猫砂）：数量越多整体越淡越简（LOD），地面不被淹没 ----
@@ -8086,7 +10015,7 @@ const MUI = (() => {
       const sx = w2sxA(d.x), sy = w2syA(d.y) + d.vy * d.t * zoom;
       const k = d.t / d.life;
       ctx.globalAlpha = 1 - k * k;
-      ctx.font = (d.crit ? '900 22px' : '700 15px') + ' "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+      ctx.font = (d.crit ? '900 22px' : '700 15px') + ' "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
       ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(30,20,40,.8)';
       ctx.strokeText(d.txt, sx, sy);
       ctx.fillStyle = d.col || (d.crit ? '#ffd34d' : '#fff');
@@ -8109,7 +10038,7 @@ const MUI = (() => {
     }
     ctx.restore();
     // ---- 夜幕 & 灯光 ----
-    ctx.fillStyle = 'rgba(18,16,52,0.30)';
+    ctx.fillStyle = 'rgba(18,16,52,0.32)';
     ctx.fillRect(0, 0, vw, vh);
     setWorldXf();
     ctx.save();
@@ -8181,7 +10110,7 @@ const MUI = (() => {
     const hurtSpr = Art.EH[e.type] ? Art.EH[e.type][0] : null;
     const sc = e.scale;
     const sx = w2sx(e.x), sy = w2sy(e.y);
-    const sprW = e.mother ? 240 : e.boss ? 160 : 64;
+    const sprW = e.mother ? 192 : e.boss ? 128 : 64;
     let yOff = 0, entryK = 0;
     if (e.boss && e.state === 'entry') { // 从天而降
       entryK = Math.max(0, e.entryT / (e.entryD || 0.9));
@@ -8241,7 +10170,7 @@ const MUI = (() => {
       ctx.translate(sx, sy - (e.mother ? 165 : 78 * sc));
       ctx.scale(k, k);
       ctx.fillStyle = '#ff6b81';
-      ctx.font = '900 ' + (e.mother ? 44 : 30) + 'px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+      ctx.font = '900 ' + (e.mother ? 44 : 30) + 'px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.lineWidth = 6; ctx.strokeStyle = '#fff';
       ctx.strokeText('!', 0, 0);
@@ -8277,7 +10206,7 @@ const MUI = (() => {
     ctx.translate(sx, sy);
     if (P.flip) ctx.scale(-1, 1);
     if (dead) {
-      ctx.drawImage(F.dead, -56, -66, 112, 112);
+      ctx.drawImage(F.dead, -48, -58, 96, 96);
     } else {
       const squash = P.moving ? 1 + Math.sin(P.walkT * 16) * 0.035 : 1;
       ctx.scale(2 - squash, squash);
@@ -8287,10 +10216,10 @@ const MUI = (() => {
       else if (P.blinkA > 0) spr = F.blink;
       else spr = F.idle[Math.sin(G.time * 2.2) > 0 ? 0 : 1];
       const bob = P.moving ? Math.abs(Math.sin(P.walkT * 9)) * 3.5 : Math.sin(G.time * 2.5) * 1.5;
-      ctx.drawImage(spr, -56, -68 - bob, 112, 112);
+      ctx.drawImage(spr, -48, -60 - bob, 96, 96);
       if (P.hurtT > 0) {
         ctx.globalAlpha = P.hurtT / 0.25;
-        ctx.drawImage(Art.playerWhite, -56, -68, 112, 112);
+        ctx.drawImage(Art.playerWhite, -48, -60, 96, 96);
       }
     }
     ctx.restore();
@@ -8329,7 +10258,7 @@ const MUI = (() => {
     if (G.gemCombo >= 5 && G.gemComboT > 0) {
       const pop = 1 + Math.max(0, G.gemComboT - 0.85) * 1.6;
       ctx.translate(vw - 48, 36); ctx.scale(pop, pop);
-      ctx.font = '700 15px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+      ctx.font = '700 15px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
       ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
       ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(20,14,40,.85)';
       ctx.strokeText('🐟 ×' + G.gemCombo, 0, 0);
@@ -8343,7 +10272,7 @@ const MUI = (() => {
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.arc(vw - 34, 30, 21, 0, TAU); ctx.fill(); ctx.stroke();
     ctx.fillStyle = '#fff';
-    ctx.font = '900 19px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+    ctx.font = '900 19px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('Lv' + (P.lv || 1), vw - 34, 31);
     ctx.restore();
@@ -8351,7 +10280,7 @@ const MUI = (() => {
     const inBossFight = G.bossWarn > 0 || (G.boss && !G.boss.dieDone);
     const tstr = U.fmtTime(G.time);
     ctx.save();
-    ctx.font = '900 34px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+    ctx.font = '900 34px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(20,14,40,.85)';
     ctx.strokeText(tstr, vw / 2, 40);
@@ -8361,7 +10290,7 @@ const MUI = (() => {
     ctx.restore();
     // 击杀 & 金币（图标 + 数字）
     ctx.save();
-    ctx.font = '700 18px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+    ctx.font = '700 18px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(20,14,40,.85)';
     ctx.strokeText('' + G.kills, vw - 66, 30);
@@ -8378,7 +10307,7 @@ const MUI = (() => {
     const batchTxt = G.batch >= R2.batchCount ? '轮Boss战！' : '批次 ' + (G.batch + 1) + '/' + R2.batchCount;
     const mapTxt = curMap ? ' · ' + curMap.meta.emoji + curMap.meta.name : ' · 无尽街区';
     ctx.textAlign = 'right';
-    ctx.font = '700 15px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+    ctx.font = '700 15px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
     ctx.strokeText('第 ' + G.round + ' 轮 · ' + batchTxt + mapTxt, vw - 66, 88);
     ctx.fillStyle = '#c9b8ff';
     ctx.fillText('第 ' + G.round + ' 轮 · ' + batchTxt + mapTxt, vw - 66, 88);
@@ -8395,7 +10324,7 @@ const MUI = (() => {
       ctx.fillStyle = 'rgba(20,12,34,.5)';
       Art.rr(ctx, 8, 26, Math.max(1, P.weapons.length) * 34 + 4, 30, 8); ctx.fill();
       ctx.fillStyle = '#ff8fb5';
-      ctx.font = '700 12px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+      ctx.font = '700 12px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
       ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
       ctx.fillText(P.stunT > 0 ? '眩晕!' : '无法攻击', 12, 41);
       ctx.restore();
@@ -8418,11 +10347,11 @@ const MUI = (() => {
     const hx = w2sxA(P.x), hy = w2syA(P.y) - 50;
     ctx.save();
     ctx.fillStyle = 'rgba(20,12,34,.55)';
-    Art.rr(ctx, hx - 25, hy, 50, 9, 4.5); ctx.fill();
+    ctx.fillRect(hx - 25, hy, 50, 9);
     const hpk = U.clamp(P.hp / P.maxHp, 0, 1);
     if (hpk > 0.02) {
       ctx.fillStyle = hpk < 0.3 ? '#ff6b81' : hpk < 0.6 ? '#ffd166' : '#8fd982';
-      Art.rr(ctx, hx - 23.5, hy + 1.5, Math.max(3, 47 * hpk), 6, 3); ctx.fill();
+      ctx.fillRect(hx - 24, hy + 1.5, Math.max(3, 48 * hpk), 6);
     }
     ctx.restore();
     // Boss 血条
@@ -8441,7 +10370,7 @@ const MUI = (() => {
         ctx.fillStyle = 'rgba(255,255,255,.25)';
         Art.rr(ctx, vw / 2 - bw / 2 + 2, 76, Math.max(6, hpw), 6, 3); ctx.fill();
       }
-      ctx.font = '700 15px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+      ctx.font = '700 15px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
       ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(20,12,34,.8)';
       const bossTitle = '👑 鼠王·铁须' + (b.affixes && b.affixes.length ? '【' + affixNames(b) + '】' : '');
@@ -8465,11 +10394,11 @@ const MUI = (() => {
       const k = Math.min(1, G.banner.t / 0.4);
       ctx.save();
       ctx.globalAlpha = k;
-      ctx.font = '900 24px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+      ctx.font = '900 24px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       const y = 122;
       const tw = ctx.measureText(G.banner.txt).width;
-      ctx.fillStyle = 'rgba(20,14,40,.55)';
+      ctx.fillStyle = 'rgba(20,14,40,.75)';
       Art.rr(ctx, vw / 2 - tw / 2 - 18, y - 22, tw + 36, 44, 22); ctx.fill();
       ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(20,14,40,.85)';
       ctx.strokeText(G.banner.txt, vw / 2, y);
@@ -8481,7 +10410,7 @@ const MUI = (() => {
     if (G.time < 18 && G.state === 'play') {
       ctx.save();
       ctx.globalAlpha = Math.min(1, 18 - G.time) * 0.8;
-      ctx.font = '600 15px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+      ctx.font = '600 15px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
       ctx.textAlign = 'center';
       ctx.fillStyle = '#cfd0ff';
       ctx.fillText(IS_TOUCH ? '按住屏幕拖动＝摇杆移动 · 武器全自动' : 'WASD / 方向键移动 · 武器全自动 · P 暂停 · M 静音', vw / 2, vh - 26);
@@ -8526,7 +10455,7 @@ const MUI = (() => {
     ctx.lineWidth = 1.6;
     Art.rr(ctx, x, y, 30, 30, 9); ctx.stroke();
     ctx.drawImage(Art.icons[meta.icon], x + 4, y + 4, 22, 22);
-    ctx.font = '900 10px "ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+    ctx.font = '900 10px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(20,14,40,.9)';
     ctx.strokeText('×' + af.stacks, x + 15, y + 25.5);
@@ -8537,8 +10466,8 @@ const MUI = (() => {
 
   /* ================= 键盘全局 ================= */
   function handleKey(code) {
-    if (code === 'KeyM') {
-      Sfx.setMuted(!Sfx.isMuted());
+    if (code === 'KeyM') { // M 静音快捷键：与 ⚙ 抽屉顶部音效按钮共用同一真源（改完经 meow-toggles 广播刷新）
+      toggleMuted();
       return;
     }
     if (G.state === 'levelup' && ['Digit1', 'Digit2', 'Digit3'].includes(code)) {
@@ -8625,7 +10554,7 @@ const MUI = (() => {
     lastResultData = data;
     let title, sub;
     if (data.mother) { title = '🐭 老鼠妈妈已讨伐！'; sub = '喵都暂时安全了……但夜巡还长，鼠群仍会再来。'; }
-    else if (data.win) { title = '🎉 收工大吉！'; sub = '第 ' + data.round + ' 轮平安归来，小鱼干满满，喵都为你骄傲！'; }
+      else if (data.win) { title = '🎉 收工大吉！'; sub = '第 ' + data.round + ' 轮平安归来，喵都为你骄傲！'; }
     else {
       title = '😿 大橘累倒了…';
       sub = data.diedToMother
@@ -8694,7 +10623,6 @@ const MUI = (() => {
   ];
 
   /* ================= 小游戏 UI 接线 ================= */
-  function cycleSpeedButton() { setSpeed(SPD_LV[(SPD_LV.indexOf(gameSpeed) + 1) % SPD_LV.length]); }
   MUI.init({
     maps: MAPS.list,
     vw, vh,
@@ -8724,11 +10652,11 @@ const MUI = (() => {
         }
         toMenu();
       },
-      toggleMute: () => { Sfx.ensure(); Sfx.setMuted(!Sfx.isMuted()); },
+      toggleMute: () => { Sfx.sfx.click(); toggleMuted(); },
       muted: () => Sfx.isMuted(),
       pause: () => { if (G.state === 'play') pauseGame(); },
       cycleZoom: () => { Sfx.ensure(); Sfx.sfx.click(); cycleZoom(1); },
-      cycleSpeed: () => { Sfx.ensure(); Sfx.sfx.click(); cycleSpeedButton(); },
+      cycleSpeed: () => { Sfx.ensure(); Sfx.sfx.click(); cycleSpeed(); },
       continueRun: () => {
         // 「继续夜巡」：讨伐老鼠妈妈后的成功结算 → 无缝续玩无限模式（一切保留）
         Sfx.sfx.click();
@@ -8748,11 +10676,22 @@ const MUI = (() => {
   if (typeof wx !== 'undefined' && wx.onHide) wx.onHide(() => { if (G.state === 'play') pauseGame(); });
 
   /* ================= 主循环 ================= */
+  // 意见5（第五版）：对局相关状态（play/升级三选一/开宝箱/暂停/倒地）隐藏右上角 ⚙ 入口
+  // （改走暂停面板的「⚙ 平衡设置」），主菜单/结算/玩法说明/更新日志等非对局界面保持可见。
+  // 状态切换点较散，就收口在帧循环里做脏检查：只在变化的那一刻写一次 DOM，不每帧碰
+  const GEAR_HIDE_STATES = ['play', 'levelup', 'chest', 'pause', 'dying'];
+  let gearHidden = false; // 与 HTML 初始可见一致，首帧免写
+  function syncGearBtn() {
+    // 小游戏版：无 ⚙ DOM 按钮（MUI 按界面自管显隐），保留脏检查状态机但去掉 DOM 写入
+    const hide = GEAR_HIDE_STATES.includes(G.state);
+    if (hide !== gearHidden) { gearHidden = hide; }
+  }
   let lastT = performance.now();
   function loop(t) {
     requestAnimationFrame(loop);
+    syncGearBtn(); // ⚙ 齿轮可见性随对局状态切换（脏检查）
     // 视口自愈：旋转/地址栏收展/分屏拖动在某些浏览器不发 resize 事件，每帧廉价比对一次
-    if (window.innerWidth !== vw || window.innerHeight !== vh) resize();
+    if (__platform.virtual.vw !== vw || __platform.virtual.vh !== vh) resize();
     const realDt = Math.min(0.05, (t - lastT) / 1000);
     lastT = t;
     let dt = realDt;
@@ -8770,7 +10709,7 @@ const MUI = (() => {
     else if (G.state === 'dying') { updateDying(dt); updateParticlesOnly(dt); }
     if (G.state !== 'menu') render();
     else { renderMenuBg(); MUI.draw(ctx, G.realTime); } // 小游戏版：菜单内容画在夜空背景之上
-    if (DEV && G.state !== 'menu') drawDevPanel();
+    if (DEV && !window.__NODEV && G.state !== 'menu') drawDevPanel(); // __NODEV：截图模式藏 dev 面板
   }
   // ?dev=1 性能小面板：实时观测震屏/猫砂区域/粒子/投射物/飘字/敌人/音效频率（中后期过载排查）
   function drawDevPanel() {
@@ -8813,8 +10752,9 @@ const MUI = (() => {
     for (const s of stars) {
       const a = 0.35 + Math.sin(G.realTime * s.sp + s.ph) * 0.3;
       ctx.globalAlpha = Math.max(0.05, a);
+      const fsz = Math.max(2, Math.round(s.r));
       ctx.fillStyle = '#fff';
-      ctx.beginPath(); ctx.arc(s.x * vw, s.y * vh, s.r, 0, TAU); ctx.fill();
+      ctx.fillRect(s.x * vw - fsz / 2, s.y * vh - fsz / 2, fsz, fsz);
     }
     ctx.restore();
     // 月亮
@@ -8845,8 +10785,9 @@ const MUI = (() => {
     ctx.drawImage(vignette, 0, 0);
   }
 
-  updateToggleBtns();
+  updateToggleBtns(); // MUI HUD 就位后，广播一次当前缩放/加速档
   if (DEV) window.__MS = { G, calcMods, DATA, getMods: () => mods, buildPool, hitEnemy, spawnEnemy,
-    getZoom: () => ({ userZoom, zoom, worldW, worldH }), getSpeed: () => gameSpeed, addXp, MUI };
-  requestAnimationFrame(loop);
+    getZoom: () => ({ userZoom, zoom, worldW, worldH }), getSpeed: () => gameSpeed, addXp, openChest, MUI };
+  const startLoop = () => requestAnimationFrame(loop);
+  if (window.__PIXEL_GATE) window.__PIXEL_GATE.then(startLoop); else startLoop();
 })();

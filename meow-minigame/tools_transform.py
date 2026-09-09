@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # 小游戏版 main.js 生成器：从 miaomiao-deploy/js/main.js fork 出去 DOM 化的定制版。
 # 每处替换都断言唯一命中，任何失配立即报错退出，防止静默漏改。
-import io, sys
+import io, re, sys
 
 SRC = r'C:\Users\gavin\Desktop\Games\miaomiao-deploy\js\main.js'
 DST = r'C:\Users\gavin\Desktop\Games\meow-minigame\src\main.js'
@@ -57,11 +57,13 @@ rep("""  const $ = id => document.getElementById(id);
   const show = (el, on) => el.classList[on ? 'remove' : 'add']('hidden');""",
 """  // 小游戏版：无 DOM，界面全部走 MUI（Canvas 覆盖层）""", 'screens')
 
-# ⑤ updateToggleBtns
+# ⑤ updateToggleBtns（第五版+：单一真源广播 meow-toggles 事件给 ⚙ 抽屉；小游戏侧直连 MUI）
 rep("""  function updateToggleBtns() {
-    const zb = $('btn-zoom'), sb = $('btn-speed');
-    if (zb) zb.textContent = '🔍 ' + userZoom + 'X';
-    if (sb) sb.textContent = '⏩ ' + gameSpeed + 'X';
+    try {
+      if (typeof document.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
+        document.dispatchEvent(new CustomEvent('meow-toggles', { detail: { zoom: userZoom, speed: gameSpeed, muted: Sfx.isMuted() } }));
+      }
+    } catch (e) { /* 无头测试桩等环境没有 CustomEvent 时静默跳过 */ }
   }""",
 """  function updateToggleBtns() { MUI.setZoomLv(userZoom + 'X'); MUI.setSpeedLv(gameSpeed + 'X'); }""", 'toggle-btns')
 
@@ -92,16 +94,7 @@ rep("""  const endTouch = e => {
     for (const t of e.changedTouches) if (t.identifier === joy.id) { joy.on = false; joy.x = 0; joy.y = 0; }
   };""", 'touch-end')
 
-# ⑨ 静音键残留 DOM
-rep("""    if (code === 'KeyM') {
-      Sfx.setMuted(!Sfx.isMuted());
-      $('btn-mute').textContent = '音效：' + (Sfx.isMuted() ? '关' : '开');
-      return;
-    }""",
-"""    if (code === 'KeyM') {
-      Sfx.setMuted(!Sfx.isMuted());
-      return;
-    }""", 'key-mute')
+# ⑨ KeyM 静音：网页版已重构为 toggleMuted() 单一真源（无 DOM 依赖），fork 原样保留，无需替换
 
 # ⑩ 老鼠妈妈结算
 rep("""    data.best = saveBest();
@@ -134,7 +127,7 @@ rep("""  function updateBestLine() {
     lastResultData = data;
     let title, sub;
     if (data.mother) { title = '🐭 老鼠妈妈已讨伐！'; sub = '喵都暂时安全了……但夜巡还长，鼠群仍会再来。'; }
-    else if (data.win) { title = '🎉 收工大吉！'; sub = '第 ' + data.round + ' 轮平安归来，小鱼干满满，喵都为你骄傲！'; }
+      else if (data.win) { title = '🎉 收工大吉！'; sub = '第 ' + data.round + ' 轮平安归来，喵都为你骄傲！'; }
     else {
       title = '😿 大橘累倒了…';
       sub = data.diedToMother
@@ -236,16 +229,16 @@ splice("""  if (DEV) { // ?map=oldtown / ?map=endless 指定地图（测试用�
 """  buildMapChips();\n  function startRun() {""",
 """  if (DEV && window.__DEV_MAP && (window.__DEV_MAP === 'endless' || MAPS.get(window.__DEV_MAP))) G.mapId = window.__DEV_MAP;\n  function startRun() {""", 'map-chips')
 
-# ⑭ startRun
+# ⑭ startRun（第五版：缩放/加速悬浮钮已并入 ⚙ 抽屉，进局不再有按钮显隐）
 rep("""    for (const k in screens) show(screens[k], false);
+    document.body.classList.remove('help-open'); // 玩法说明若开着，同步收回放开过的纵向触摸
     G.state = 'play';
-    show($('btn-zoom'), true); show($('btn-speed'), true); // 缩放/加速按钮进局显示
     Sfx.bgmStart(G.mapId); // 意见5：每张地图一首 BGM""",
 """    MUI.setScreen(null);
     G.state = 'play';
     Sfx.bgmStart(G.mapId); // 意见5：每张地图一首 BGM""", 'start-run')
 
-# ⑮ 暂停 / 恢复 / 回菜单
+# ⑮ 暂停 / 恢复 / 回菜单（第五版：toMenu 里的 help-open 收回 / best-line 行都是 DOM 概念，MUI 不需要）
 rep("""  function pauseGame() {
     G.state = 'pause';
     show(screens.pause, true);
@@ -257,7 +250,7 @@ rep("""  function pauseGame() {
   function toMenu() {
     G.state = 'menu';
     Sfx.bgmStop();
-    show($('btn-zoom'), false); show($('btn-speed'), false); // 缩放/加速按钮只在局内有意义
+    document.body.classList.remove('help-open');
     for (const k in screens) show(screens[k], k === 'menu');
     updateBestLine();
   }""",
@@ -329,12 +322,12 @@ splice("""    // 呈现（同一技能抽中多次：逐行显示递进等级 Lv
     Sfx.meow('chest');
     const box = $('chest-rewards');
     box.innerHTML = '';
-    let delay = 0;
     const applyLater = [];
     const lvlPreview = new Map();
     const stampPreview = new Map();
-    rewards.forEach((r, ri) => {""",
-"""    if (rewards.some(r => r.type === 'evo')) { setTimeout(() => { Sfx.sfx.evolve(); Sfx.meow('happy'); }, 550); }
+    const rolls = []; // 老虎机滚动行（与奖励行一一对应）
+    rewards.forEach(r => {""",
+"""    if (AUTO === 'play' || AUTO === 'boss') setTimeout(() => $('btn-chest-ok').click(), 1500);
   }""",
 """    // 呈现：奖励行 → MUI 宝箱面板（同一奖励抽中多次会逐行显示递进等级，每次都是真实+1级）
     G.evoPending = rewards.some(r => r.type === 'evo');
@@ -420,7 +413,6 @@ splice("""    // 呈现（同一技能抽中多次：逐行显示递进等级 Lv
 splice("""  $('btn-start').addEventListener('click', startRun);""",
 """  document.addEventListener('visibilitychange', () => { if (document.hidden && G.state === 'play') pauseGame(); });""",
 """  /* ================= 小游戏 UI 接线 ================= */
-  function cycleSpeedButton() { setSpeed(SPD_LV[(SPD_LV.indexOf(gameSpeed) + 1) % SPD_LV.length]); }
   MUI.init({
     maps: MAPS.list,
     vw, vh,
@@ -450,11 +442,11 @@ splice("""  $('btn-start').addEventListener('click', startRun);""",
         }
         toMenu();
       },
-      toggleMute: () => { Sfx.ensure(); Sfx.setMuted(!Sfx.isMuted()); },
+      toggleMute: () => { Sfx.sfx.click(); toggleMuted(); },
       muted: () => Sfx.isMuted(),
       pause: () => { if (G.state === 'play') pauseGame(); },
       cycleZoom: () => { Sfx.ensure(); Sfx.sfx.click(); cycleZoom(1); },
-      cycleSpeed: () => { Sfx.ensure(); Sfx.sfx.click(); cycleSpeedButton(); },
+      cycleSpeed: () => { Sfx.ensure(); Sfx.sfx.click(); cycleSpeed(); },
       continueRun: () => {
         // 「继续夜巡」：讨伐老鼠妈妈后的成功结算 → 无缝续玩无限模式（一切保留）
         Sfx.sfx.click();
@@ -488,6 +480,7 @@ rep("""    ctx.drawImage(vignette, 0, 0);
 rep("""    ctx.drawImage(vignette, 0, 0);
     // 主视觉猫（摆尾 / 挥爪 / 眨眼）
     const mc = $('menu-art').getContext('2d');
+    mc.imageSmoothingEnabled = false;
     mc.clearRect(0, 0, 640, 560);
     const blink = (G.realTime % 4.6) < 0.14;
     const frame = Math.floor(G.realTime * 1.6) % 2;
@@ -497,13 +490,24 @@ rep("""    ctx.drawImage(vignette, 0, 0);
 """    ctx.drawImage(vignette, 0, 0);
   }""", 'menu-cat')
 
-# ㉒ init 尾部：CfgPanel/openCfg 移除 + __MS 扩充
+# ㉒ init 尾部：MeowView/CfgPanel/openCfg/cfg-mute-btn 移除 + __MS 扩充
+#    （第五版+：H5 侧音效/缩放/加速档位改由 window.MeowView + ⚙ 设置抽屉消费；小游戏侧 MUI.init 接线已覆盖）
 rep("""  updateBestLine();
-  updateToggleBtns();
+  // 🔊/🔍/⏩ 对外接口：暂停面板三钮（config_panel.js 负责发起循环与刷新文字）用它们循环档位、读取当前值；
+  // 值变化由 setZoom/setSpeed/toggleMuted → updateToggleBtns 以 meow-toggles 事件广播
+  window.MeowView = {
+    cycleZoom: dir => cycleZoom(dir || 1),
+    cycleSpeed: () => cycleSpeed(),
+    get: () => ({ zoom: userZoom, speed: gameSpeed, muted: Sfx.isMuted() })
+  };
   // ⚙ 平衡设置面板
   CfgPanel.init({
     onClose: () => { if (G.state === 'pause') show(screens.pause, true); }
   });
+  updateToggleBtns(); // 事件监听就位后，广播一次当前音效/缩放/加速状态
+  // 暂停面板三钮一行的音效钮接线（原 #btn-mute 逻辑，id 沿用 #cfg-mute-btn）；
+  // 单击切换 → meow-toggles 广播 → config_panel.js 刷新按钮文字，真源仍在 toggleMuted
+  $('cfg-mute-btn').addEventListener('click', () => { Sfx.sfx.click(); toggleMuted(); });
   const openCfg = () => {
     Sfx.ensure(); Sfx.sfx.click();
     if (G.state === 'play') pauseGame();
@@ -514,15 +518,16 @@ rep("""  updateBestLine();
   $('btn-cfg-pause').addEventListener('click', openCfg);
   if (DEV) window.__MS = { G, calcMods, DATA, getMods: () => mods, buildPool, hitEnemy, spawnEnemy,
     getZoom: () => ({ userZoom, zoom, worldW, worldH }), getSpeed: () => gameSpeed };""",
-"""  updateToggleBtns();
+"""  updateToggleBtns(); // MUI HUD 就位后，广播一次当前缩放/加速档
   if (DEV) window.__MS = { G, calcMods, DATA, getMods: () => mods, buildPool, hitEnemy, spawnEnemy,
-    getZoom: () => ({ userZoom, zoom, worldW, worldH }), getSpeed: () => gameSpeed, addXp, MUI };""", 'init-tail')
+    getZoom: () => ({ userZoom, zoom, worldW, worldH }), getSpeed: () => gameSpeed, addXp, openChest, MUI };""", 'init-tail')
 
-# ㉓ AUTO 自动化块删除（保留循环启动）
+# ㉓ AUTO 自动化块删除（保留与 H5 一致的像素字体启动门 __PIXEL_GATE：等像素素材就绪再开循环）
 splice("""  // 自动化测试钩子（仅 ?dev=1&auto=... 生效）
   if (AUTO) {""",
-"""  requestAnimationFrame(loop);""",
-"""  requestAnimationFrame(loop);""", 'auto-block')
+"""  else startLoop();""",
+"""  const startLoop = () => requestAnimationFrame(loop);
+  if (window.__PIXEL_GATE) window.__PIXEL_GATE.then(startLoop); else startLoop();""", 'auto-block')
 
 # ㉔ 主循环菜单分支接 MUI.draw
 rep("""    if (G.state !== 'menu') render();
@@ -530,7 +535,53 @@ rep("""    if (G.state !== 'menu') render();
     if (DEV && G.state !== 'menu') drawDevPanel();""",
 """    if (G.state !== 'menu') render();
     else { renderMenuBg(); MUI.draw(ctx, G.realTime); } // 小游戏版：菜单内容画在夜空背景之上
-    if (DEV && G.state !== 'menu') drawDevPanel();""", 'loop-menu-mui')
+    if (DEV && !window.__NODEV && G.state !== 'menu') drawDevPanel(); // __NODEV：截图模式藏 dev 面板""", 'loop-menu-mui')
+
+# ㉘ 触屏判定：小游戏 window 桩没有 ontouchstart 键，固定按触屏处理（提示文案走手机版）
+rep("  const IS_TOUCH = 'ontouchstart' in window; // 手机/平板：提示文案与桌面不同",
+    "  const IS_TOUCH = true; // 小游戏版：纯触屏，提示文案固定手机版", 'is-touch')
+
+# ㉙ 离屏画布尺寸必须取整：wx 包装画布的 width/height 是普通属性，不做 WebIDL 整数化，
+#    塞进小数（如 innerWidth=1905.33）后 drawImage 会以"类型不合法"拒绝（真机模拟器实测踩雷）
+rep("""    vignette = document.createElement('canvas');
+    vignette.width = vw; vignette.height = vh;""",
+"""    vignette = document.createElement('canvas');
+    vignette.width = Math.max(1, Math.round(vw)); vignette.height = Math.max(1, Math.round(vh));""", 'vignette-int')
+
+# ㉚ 视口/dpr 钉死到虚拟值（v3 虚拟视口）：不依赖宿主 window（开发者工具下它是锁死的页面 window，
+#    innerWidth=整个页面宽、devicePixelRatio=2，会导致画布 2x 放大后被裁切——真机模拟器实测踩雷）
+rep("    dpr = Math.min(2, window.devicePixelRatio || 1);",
+    "    dpr = __platform.virtual.dpr;", 'pin-dpr')
+rep("    vw = window.innerWidth; vh = window.innerHeight;",
+    "    vw = __platform.virtual.vw; vh = __platform.virtual.vh;", 'pin-vwvh')
+rep("    if (window.innerWidth !== vw || window.innerHeight !== vh) resize();",
+    "    if (__platform.virtual.vw !== vw || __platform.virtual.vh !== vh) resize();", 'pin-selfheal')
+# ㉛ 画布 CSS 尺寸 = 真实 pt（虚拟 vw 是绘制坐标系；CSS 若也用虚拟宽度，屏幕上会 2x 放大裁切——实测踩雷）
+rep("    cv.style.width = vw + 'px'; cv.style.height = vh + 'px';",
+    "    cv.style.width = __platform.sys.windowWidth + 'px'; cv.style.height = __platform.sys.windowHeight + 'px';", 'pin-css')
+
+# ㉜ 金币头奖庆祝层禁用：worldCelebrate 依赖 DOM 覆盖层（#chest-fx），小游戏无 DOM——
+#    直接置空函数体。可达链 worldCelebrate→chestFxMount→chestFxStart 会读 fx.cv.width 必崩
+#    （≥80% 金币头奖概率性触发，评审抓出）
+rep("""  function worldCelebrate() {
+    fxTok++; fxTimersClear(); // 新的一场：作废旧演出残留""",
+"""  function worldCelebrate() {
+    return; // 小游戏版：金币头奖庆祝层依赖 DOM 覆盖层，禁用（世界层粒子/飘字不受影响）
+    fxTok++; fxTimersClear(); // 新的一场：作废旧演出残留""", 'world-celebrate-stub')
+
+# ㉝ ⚙ 齿轮显隐脏检查：函数体写 $('btn-cfg').hidden——fork 里 $ 未定义，每次界面切换崩一次
+#    （控制台反复报错的真凶）。MUI 界面自管齿轮显隐，保留状态机但去掉 DOM 写入。
+rep("""  function syncGearBtn() {
+    const hide = GEAR_HIDE_STATES.includes(G.state);
+    if (hide === gearHidden) return;
+    gearHidden = hide;
+    $('btn-cfg').hidden = hide;
+  }""",
+"""  function syncGearBtn() {
+    // 小游戏版：无 ⚙ DOM 按钮（MUI 按界面自管显隐），保留脏检查状态机但去掉 DOM 写入
+    const hide = GEAR_HIDE_STATES.includes(G.state);
+    if (hide !== gearHidden) { gearHidden = hide; }
+  }""", 'sync-gear-btn')
 
 if fails:
     print('TRANSFORM FAILED:')
@@ -538,9 +589,33 @@ if fails:
         print('  -', f)
     sys.exit(1)
 
+# 残留 DOM 检查 v3：函数上下文追踪 + 定点豁免 + 非豁免命中即阻断（写入前拦截）。
+# 豁免两类：① 桩安全模式 document.createElement('canvas') / document.addEventListener(
+#    adapter 的 document 桩对二者分别映射 wx 离屏画布与 no-op，均无害）；
+# ② 已确认不可达/浏览器分支专用的函数（ALLOW_FNS）。
+ALLOW_FNS = {
+    'updateBestLine', 'saveReportImage',
+    'worldCelebrate', 'chestFxMount', 'chestFxStart', 'chestFxBoom',
+    'chestRollTick', 'chestSettleRow', 'chestFinishShow', 'chestSkipAll',
+    'fxStopAll',
+}
+cur_fn = ''
+bad = []
+SAFE_PATTERNS = ("document.createElement('canvas')", "document.addEventListener(")
+for ln in s.split('\n'):
+    m = re.match(r'\s*(?:async\s+)?function\s+(\w+)', ln)
+    if m:
+        cur_fn = m.group(1)
+    if cur_fn in ALLOW_FNS:
+        continue
+    if '$(' in ln or 'screens.' in ln or 'CfgPanel' in ln or 'updateBestLine' in ln or 'document.' in ln:
+        if any(p in ln for p in SAFE_PATTERNS):
+            continue
+        bad.append(cur_fn + ' :: ' + ln.strip()[:120])
+if bad:
+    print('LEFTOVER DOM refs outside allowlist（拒绝生成，防止运行时崩溃）:')
+    for b in bad[:20]:
+        print('  LEFTOVER:', b)
+    sys.exit(1)
 io.open(DST, 'w', encoding='utf-8', newline='\n').write(s)
-leftover = [ln.strip()[:130] for ln in s.split('\n') if "$(" in ln or 'screens.' in ln or 'CfgPanel' in ln or 'updateBestLine' in ln]
-print('main.js fork generated:', DST)
-print('leftover DOM refs:', len(leftover))
-for l2 in leftover[:20]:
-    print('  ', l2)
+print('main.js fork generated:', DST, '(残留 DOM 检查：全部定点豁免/白名单内)')

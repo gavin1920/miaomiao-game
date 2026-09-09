@@ -4,7 +4,7 @@
 <head>
 <meta charset="UTF-8">
 <title>meow-minigame bundle test</title>
-<style>html,body{margin:0;background:#141430;overflow:hidden}#game{display:block}</style>
+<style>html,body{margin:0;background:#141430;overflow:hidden}#game{display:block;width:100vw;height:100vh}</style>
 </head>
 <body>
 <canvas id="game"></canvas>
@@ -25,7 +25,7 @@
   window.__errs = [];
   window.addEventListener('error', e => window.__errs.push(String(e.message)));
 </script>
-<script src="wx-stub.js"></script>
-<script src="../bundle.js"></script>
+<script src="wx-stub.js?v=wxbranch2"></script>
+<script src="../bundle.js?v=wxbranch2"></script>
 </body>
 </html>

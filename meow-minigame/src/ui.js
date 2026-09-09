@@ -5,7 +5,7 @@
    main 在每帧渲染末尾调用 MUI.draw()，触摸事件先经 MUI.touch()（界面吃掉就不给摇杆）。 */
 'use strict';
 const MUI = (() => {
-  const FONT = '"ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
+  const FONT = '"Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif'; // 像素字体由 adapter wx.loadFont 注册
   const TAU = Math.PI * 2;
 
   /* ---------- 运行时（init 注入） ---------- */
@@ -59,6 +59,13 @@ const MUI = (() => {
     rr(x, bx, by, bw, bh, bh / 2);
     x.lineWidth = 3; x.strokeStyle = hot ? '#e0678f' : '#4fb3b0'; x.stroke();
     x.font = '700 ' + Math.round(bh * 0.48) + 'px ' + FONT;
+    /* 长文案自动缩字（如「📷 保存战报」在窄按钮上会溢出）：逐号缩小到按钮内宽为止 */
+    let btnFs = bh * 0.48;
+    const btnMaxW = bw - 14;
+    while (btnFs > 10 && x.measureText(label).width > btnMaxW) {
+      btnFs -= 1;
+      x.font = '700 ' + Math.round(btnFs) + 'px ' + FONT;
+    }
     x.textAlign = 'center'; x.textBaseline = 'middle';
     x.lineWidth = 4; x.strokeStyle = 'rgba(60,30,20,.2)';
     x.strokeText(label, bx + bw / 2, by + bh / 2 + 1);
@@ -538,11 +545,14 @@ const MUI = (() => {
     if (screen) return; // 覆盖层打开时不画 HUD 角落按钮
     const r2 = Math.max(18, Math.min(24, vh * 0.055));
     const cx = vw - r2 - 8;
+    /* 顶部按钮组起点：默认 16%h；真机时避让微信胶囊（__CAPSULE 已是虚拟坐标） */
+    const capTop = (typeof __CAPSULE !== 'undefined' && __CAPSULE) ? __CAPSULE.bottom + r2 + 8 : 0;
+    const hudTop = Math.max(vh * 0.16, capTop);
     const defs = [
-      { icon: '⏸', fn: cb.pause, dy: vh * 0.16 },
-      { icon: '🔍', sub: zoomLv, fn: cb.cycleZoom, dy: vh * 0.16 + (r2 + 6) },
-      { icon: '⏩', sub: speedLv, fn: cb.cycleSpeed, dy: vh * 0.16 + (r2 + 6) * 2 },
-      { icon: cb.muted() ? '🔇' : '🔊', fn: cb.toggleMute, dy: vh * 0.16 + (r2 + 6) * 3 }
+      { icon: '⏸', fn: cb.pause, dy: hudTop },
+      { icon: '🔍', sub: zoomLv, fn: cb.cycleZoom, dy: hudTop + (r2 + 6) },
+      { icon: '⏩', sub: speedLv, fn: cb.cycleSpeed, dy: hudTop + (r2 + 6) * 2 },
+      { icon: cb.muted() ? '🔇' : '🔊', fn: cb.toggleMute, dy: hudTop + (r2 + 6) * 3 }
     ];
     for (const d2 of defs) {
       const cy = d2.dy + r2;

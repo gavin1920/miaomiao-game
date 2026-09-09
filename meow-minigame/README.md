@@ -9,7 +9,7 @@ H5 本体（仓库内 `miaomiao-deploy/`）的微信小游戏移植版：**引�
 meow-minigame/
 ├── game.js               # 小游戏入口（require bundle + 分享能力）
 ├── game.json             # 小游戏配置（横屏）
-├── project.config.json   # 开发者工具工程配置（appid 占位 touristappid）
+├── project.config.json   # 开发者工具工程配置（appid：测试号 wxfef91db419d837bc，正式提审也用它）
 ├── bundle.js             # 打包产物：adapter + 引擎 + UI + main 按浏览器 script 语义拼接
 ├── src/
 │   ├── adapter.js        # wx→DOM/BOM 适配层（window/document/canvas/localStorage/WebAudio/触摸桥）
@@ -34,11 +34,13 @@ bash /c/Users/gavin/Desktop/Games/miaomiao-deploy/tools/sync-minigame.sh
 ## 在微信开发者工具里运行
 
 1. 打开「微信开发者工具」→ 导入项目 → 目录选 `meow-minigame/`，AppID 用测试号
-   （`project.config.json` 里是 `touristappid` 占位，正式发布前换成自己的小游戏 AppID）。
+   （`project.config.json` 的 appid 当前是测试号 `wxfef91db419d837bc`，可预览/上传体验版；
+   正式提审继续用同一 AppID，无需更换——除非你注册了新的小游戏账号）。
 2. 编译即可玩：横屏、虚拟摇杆、HUD 右上角 ⏸ 暂停 / 🔍 缩放（4X=旧版大画面）/
    ⏩ 加速（1~3X）/ 🔊 静音，菜单选地图、玩法说明、游戏内更新日志齐备。
 3. 本机没装开发者工具时的替代验证：浏览器打开 `test/index.html`（源文件版）
-   或 `test/bundle.html`（打包产物版），wx 桩 + 触摸全链路都可冒烟。
+   或 `test/bundle.html`（打包产物版），wx 桩 + 触摸全链路都可冒烟；
+   加 `?wx=1` 可强制走「真实小游戏分支」的适配层路径（仿真模拟器环境，回归必测）。
 
 ## 适配要点（对应 docs/小程序化方案.md 的 P0）
 
@@ -53,17 +55,44 @@ bash /c/Users/gavin/Desktop/Games/miaomiao-deploy/tools/sync-minigame.sh
 | 字体 | ZCOOL KuaiLe 在线字体不可用，自动回退系统字体（后续可内置子集化字体） |
 | 生命周期外的 UI | H5 的 HTML 覆盖层全部在 Canvas 上重建（MUI），命中测试即点即用 |
 | 战报分享 | 结算「保存战报」→ `canvasToTempFilePath` + `saveImageToPhotosAlbum`（授权失败有 toast） |
+| 全局挂载 | 开发者工具小游戏模式的 window/document 是锁死全局，defGlobal 赋值+defineProperty 双保险（20260909 真机模拟器实测踩雷修复） |
+| 视口来源 | window 桩装不上时，把真实 window 的 innerWidth/innerHeight/devicePixelRatio 重定义为 wx 手机视口，避免读到页面级尺寸导致画布被 1:1 裁切 |
+| 离屏画布取整 | wx 包装画布的 width/height 不做 WebIDL 整数化，小数尺寸会被 drawImage 拒绝；transform ㉙ 对 vignette 等统一 Math.round |
 
 ## 尚未做（上线前需要）
 
-- 真机测试（本机无微信开发者工具；已用浏览器桩全流程冒烟：菜单/开局/升级/宝箱/
-  结算/帮助/日志/缩放/加速/保存战报，全链路零报错）。
-- 正式 AppID、注册小游戏账号、代码上传与提审（见 `miaomiao-deploy/docs/小程序化方案.md` 的
-  合规与提审章节）。
-- 开放数据域好友排行榜、包体优化与子集化字体（P2 阶段）。
+- 真机测试（模拟器已实测：主菜单/战斗/升级三选一/暂停/结算全链路通过；
+  浏览器桩 ?wx=1 真实分支冒烟零报错。建议 iOS + 安卓真机各回归一轮）。
+- 小程序后台配置：用户隐私保护指引（含"相册（仅写入）"，供保存战报用）、
+  游戏资质（软著/电子版权认证或承诺制通道）、体验成员名单。
+- 开放数据域好友排行榜（P2 阶段）。
+
+## 已知问题（体验版观察项）
+
+- **启动期控制台可能有一条 `getSystemInfo fail: jsbridge not ready` 报错**：开发者工具/真机在
+  jsbridge 就绪前调用系统信息接口时运行时自行打印的噪音，适配层有 500ms 重试兜底，
+  视口最终正确，不影响游玩（已在模拟器与体验版验证）。
+- 像素风三要素已完整移植：pixel-assets 像素精灵（art_pixel.js + window.PIXEL_MANIFEST 内联）、
+  地形 1/4 烘焙放大（imageSmoothing 全局关闭）、Fusion Pixel 字体子集（tools_font.py 生成，
+  wx.loadFont 注册，家族名已改写为 "Fusion Pixel" 命中全部字体栈）。真机上若发现某个
+  界面仍是平滑矢量风，多半是 imageSmoothingEnabled 在该机型不生效——反馈截图即可。
+- v3 虚拟视口：游戏恒按 720p 设计基准作画，适配层等比贴到物理屏（解决开发者工具
+  window 锁死导致的 2x 裁切）。折叠屏/分屏改变纵横比后需重启小游戏（暂无 onWindowResize 桥）。
+
+## 发布素材（store/）
+
+- `icon-512.png` / `icon-144.png`：小游戏头像（icon.html 可再生成）。
+- `raw-menu / raw-combat / raw-levelup / raw-pause / raw-result / raw-help .png`：
+  1280×720 横屏实机截图（?nodev=1 模式下截取，无 dev 面板、触屏文案）。
+- `发布指南.md`：注册 → 备案/资质 → 导入工具 → 上传 → 提审 → 发布全流程 + 文案速贴。
 
 ## 维护提醒
 
 网页版 `js/main.js` 改动后只需重跑 `sync-minigame.sh`；**网页版若改了 UI 交互结构**
 （如新增面板），需要同步修改 `src/ui.js` 与 `tools_transform.py` 的对应转换规则。
 引擎数值/玩法逻辑在 `game-js/` 里永远是网页版原文件，不维护两份。
+
+⚠️ `project.config.json` 的 `setting.es6` 必须保持 **true**：关闭后预览/上传的编译管线
+会因 bundle 里的 `??` 等新语法直接报 SyntaxError（模拟器用的是本地 Chromium，不会暴露此问题）。
+IDE 导入工程时会重写该文件，重写后记得复查。appid 已换为正式测试账号
+`wxfef91db419d837bc`（可预览/上传体验版；正式提审继续用它，无需再换）。

@@ -2,18 +2,77 @@
   "description": "喵都幸存者 微信小游戏版（H5 本体 + 适配层）",
   "packOptions": {
     "ignore": [
-      { "type": "folder", "value": "test" },
-      { "type": "folder", "value": "node_modules" }
-    ]
+      {
+        "value": "test",
+        "type": "folder"
+      },
+      {
+        "value": "node_modules",
+        "type": "folder"
+      },
+      {
+        "value": "src",
+        "type": "folder"
+      },
+      {
+        "value": "game-js",
+        "type": "folder"
+      },
+      {
+        "value": "store",
+        "type": "folder"
+      },
+      {
+        "value": "tools_transform.py",
+        "type": "file"
+      },
+      {
+        "value": "tools_font.py",
+        "type": "file"
+      },
+      {
+        "value": "assets/fonts/charset.txt",
+        "type": "file"
+      },
+      {
+        "value": "pixel-assets/manifest.js",
+        "type": "file"
+      },
+      {
+        "value": "README.md",
+        "type": "file"
+      }
+    ],
+    "include": []
   },
   "setting": {
-    "es6": false,
+    "es6": true,
     "postcss": false,
     "minified": false,
-    "urlCheck": false
+    "urlCheck": false,
+    "compileWorklet": false,
+    "uglifyFileName": false,
+    "uploadWithSourceMap": true,
+    "enhance": false,
+    "packNpmManually": false,
+    "packNpmRelationList": [],
+    "minifyWXSS": true,
+    "minifyWXML": true,
+    "localPlugins": false,
+    "disableUseStrict": false,
+    "useCompilerPlugins": false,
+    "condition": false,
+    "babelSetting": {
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    }
   },
   "compileType": "game",
-  "libVersion": "3.7.1",
-  "appid": "touristappid",
-  "projectname": "meow-survivors"
+  "libVersion": "3.17.2",
+  "appid": "wxfef91db419d837bc",
+  "projectname": "meow-survivors",
+  "simulatorPluginLibVersion": {},
+  "isGameTourist": false,
+  "editorSetting": {}
 }

@@ -1,0 +1,265 @@
+{
+ "player": {
+  "idle": [
+   "characters/daju/idle_1.png",
+   "characters/daju/idle_2.png"
+  ],
+  "blink": [
+   "characters/daju/idle_2.png"
+  ],
+  "menu": [
+   "characters/daju/idle_1.png",
+   "characters/daju/idle_3.png"
+  ],
+  "walk": [
+   "characters/daju/walk_1.png",
+   "characters/daju/walk_2.png",
+   "characters/daju/walk_3.png",
+   "characters/daju/walk_4.png"
+  ],
+  "hurt": [
+   "characters/daju/hurt_1.png"
+  ],
+  "dead": [
+   "characters/daju/die_1.png"
+  ],
+  "dash": [
+   "characters/daju/dash_1.png",
+   "characters/daju/dash_2.png"
+  ]
+ },
+ "enemies": {
+  "rat": {
+   "walk": [
+    "characters/rat/idle_1.png",
+    "characters/rat/idle_2.png"
+   ],
+   "scale": 2,
+   "blink": [
+    "characters/rat/idle_2.png"
+   ]
+  },
+  "sparrow": {
+   "walk": [
+    "characters/sparrow/idle_1.png",
+    "characters/sparrow/idle_2.png"
+   ],
+   "scale": 2,
+   "blink": [
+    "characters/sparrow/idle_2.png"
+   ]
+  },
+  "snail": {
+   "walk": [
+    "characters/snail/idle_1.png",
+    "characters/snail/idle_2.png"
+   ],
+   "scale": 2,
+   "blink": [
+    "characters/snail/idle_2.png"
+   ]
+  },
+  "goose": {
+   "walk": [
+    "characters/goose/idle_1.png",
+    "characters/goose/idle_2.png"
+   ],
+   "scale": 2,
+   "blink": [
+    "characters/goose/idle_2.png"
+   ]
+  },
+  "bat": {
+   "walk": [
+    "characters/bat/idle_1.png",
+    "characters/bat/idle_2.png"
+   ],
+   "scale": 2,
+   "blink": [
+    "characters/bat/idle_2.png"
+   ]
+  },
+  "raccoon": {
+   "walk": [
+    "characters/raccoon/idle_1.png",
+    "characters/raccoon/idle_2.png"
+   ],
+   "scale": 2,
+   "blink": [
+    "characters/raccoon/idle_2.png"
+   ]
+  },
+  "bulldog": {
+   "walk": [
+    "characters/bulldog/idle_1.png",
+    "characters/bulldog/idle_2.png"
+   ],
+   "scale": 2,
+   "blink": [
+    "characters/bulldog/idle_2.png"
+   ]
+  },
+  "calico": {
+   "walk": [
+    "characters/calico/idle_1.png",
+    "characters/calico/idle_2.png"
+   ],
+   "scale": 2,
+   "blink": [
+    "characters/calico/idle_2.png"
+   ]
+  },
+  "pigeon": {
+   "walk": [
+    "characters/pigeon/idle_1.png",
+    "characters/pigeon/idle_2.png"
+   ],
+   "scale": 2,
+   "blink": [
+    "characters/pigeon/idle_2.png"
+   ]
+  },
+  "boss": {
+   "walk": [
+    "characters/ratking/idle_1.png",
+    "characters/ratking/idle_2.png"
+   ],
+   "scale": 2,
+   "blink": [
+    "characters/ratking/idle_2.png"
+   ],
+   "attack": [
+    "characters/ratking/attack_1.png",
+    "characters/ratking/attack_2.png"
+   ],
+   "tele": "characters/ratking/tele_1.png",
+   "dead": "characters/ratking/die_2.png"
+  },
+  "mother": {
+   "walk": [
+    "characters/mother/idle_1.png",
+    "characters/mother/idle_2.png"
+   ],
+   "scale": 2,
+   "blink": [
+    "characters/mother/idle_2.png"
+   ],
+   "attack": [
+    "characters/mother/wind_1.png",
+    "characters/mother/wind_2.png"
+   ],
+   "tele": "characters/mother/slash_1.png",
+   "dead": "characters/mother/die_1.png"
+  }
+ },
+ "projs": {
+  "axe": [
+   "weapons/proj/axe_1.png"
+  ],
+  "fishProj": [
+   "weapons/proj/fish_1.png"
+  ],
+  "litter": [
+   "weapons/proj/litter_1.png"
+  ],
+  "note": [
+   "weapons/proj/note_1.png"
+  ],
+  "yarn": [
+   "weapons/proj/orbit_1.png"
+  ],
+  "yarnBig": [
+   "weapons/proj/orbit_2.png"
+  ]
+ },
+ "items": {
+  "gem1": "items/pickups/gem_1/tier_1.png",
+  "gem2": "items/pickups/gem_2/tier_1.png",
+  "gem3": "items/pickups/gem_3/tier_1.png",
+  "coin": "items/pickups/coin/coin_1.png",
+  "chestClosed": "items/pickups/chest/closed.png",
+  "chestOpen": "items/pickups/chest/open.png",
+  "milk": "items/icons/milk.png",
+  "vacuum": "items/icons/vacuum.png",
+  "firework": "items/icons/firework.png"
+ },
+ "icons": {
+  "paw": "items/pickups/stamp/idle_1.png",
+  "claw": "weapons/icons/claw.png",
+  "claw_evo": "weapons/icons/claw_evo.png",
+  "note": "weapons/icons/note.png",
+  "note_evo": "weapons/icons/note_evo.png",
+  "fish": "weapons/icons/fish.png",
+  "fish_evo": "weapons/icons/fish_evo.png",
+  "axe": "weapons/icons/axe.png",
+  "axe_evo": "weapons/icons/axe_evo.png",
+  "orbit": "weapons/icons/orbit.png",
+  "orbit_evo": "weapons/icons/orbit_evo.png",
+  "aura": "weapons/icons/aura.png",
+  "aura_evo": "weapons/icons/aura_evo.png",
+  "litter": "weapons/icons/litter.png",
+  "litter_evo": "weapons/icons/litter_evo.png",
+  "zap": "weapons/icons/zap.png",
+  "zap_evo": "weapons/icons/zap_evo.png",
+  "catnip": "items/icons/catnip.png",
+  "alarm": "items/icons/alarm.png",
+  "yarnball": "items/icons/yarnball.png",
+  "bell": "items/icons/bell.png",
+  "gloves": "items/icons/gloves.png",
+  "magnetfish": "items/icons/magnetfish.png",
+  "koi": "items/icons/koi.png",
+  "milk": "items/icons/milk.png",
+  "firework": "items/icons/firework.png",
+  "vacuum": "items/icons/vacuum.png",
+  "coin": "items/icons/coin.png",
+  "dmg": "items/icons/dmg.png",
+  "cd": "items/icons/cd.png",
+  "area": "items/icons/area.png",
+  "amount": "items/icons/amount.png",
+  "pierce": "items/icons/pierce.png",
+  "crit": "items/icons/crit.png",
+  "lifesteal": "items/icons/lifesteal.png",
+  "scale": "items/icons/scale.png",
+  "radius": "items/icons/radius.png"
+ },
+ "decor": {
+  "bench": "maps/oldtown/props/bench.png",
+  "boxes": "maps/oldtown/props/boxes.png",
+  "hydrant": "props/hydrant/idle_1.png",
+  "lamp": "props/vending/on.png",
+  "potted": "maps/oldtown/props/planter.png",
+  "sign": "maps/onsen/props/sign.png",
+  "tree": "maps/sakura/props/sakura.png",
+  "vending": "props/vending/on.png",
+  "bush": "props/decor/bush.png",
+  "manhole": "props/decor/manhole.png",
+  "crosswalk": "props/decor/crosswalk.png",
+  "pond": "props/decor/pond.png",
+  "puddle": "props/decor/puddle.png",
+  "fountain": "props/decor/fountain.png"
+ },
+ "slash": "fx/hitstar/s2.png",
+ "sky": {
+  "moon": {
+   "path": "props/decor/moon.png",
+   "w": 200,
+   "h": 200
+  },
+  "cloud1": {
+   "path": "props/decor/cloud1.png",
+   "w": 300,
+   "h": 112
+  },
+  "cloud2": {
+   "path": "props/decor/cloud2.png",
+   "w": 240,
+   "h": 90
+  },
+  "skyline": {
+   "path": "props/decor/skyline.png",
+   "w": 1024,
+   "h": 210
+  }
+ },
+ "eliteCrown": "ui/elite_crown.png"
+}
