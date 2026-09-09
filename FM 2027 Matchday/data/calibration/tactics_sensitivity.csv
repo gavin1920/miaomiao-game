@@ -1,0 +1,7 @@
+id,name,setup_a,setup_b,metric,expected_direction,min_effect,batch_n
+high_line_vs_pace,超高防线 vs 速度型突前前锋,"def_line_base_m=46; offside_trap=false","def_line_base_m=37; offside_trap=false",ball_recovery(source=interception) 后 shot(xg>0.4) 次数（被打身后）,a_gt_b,0.3,500
+low_block_vs_sterile,低位块 vs 缺乏创造力对手,"press{intensity=0.1; count=1}; def_line_base_m=28","press{intensity=0.5; count=2}; def_line_base_m=37",goals_per_match 下降且 set_piece 进球占比上升,a_lt_b_goals_and_setpiece_up,0.2,500
+counter_press_vs_weak_buildup,反抢包 vs 出球弱队,"counter_press{enabled=true; radius_m=12; count=3} 对手 buildup.short_pass_bias=0.8","counter_press{enabled=false}",前场 ball_recovery(source=counter_press) 次数与其转化 xG,a_gt_b,0.25,500
+offside_trap_vs_af,造越位开关 vs 突前前锋,"offside_trap=true","offside_trap=false",offside 次数与防线失误失球同步上升,a_gt_b,0.2,500
+inverted_wingers,双内锋 vs 双边锋,"roles: 两翼=IF(at)（逆足）","roles: 两翼=W(at)",shot(origin=box_centre) 占比与小禁区倒三角得分模式出现,a_gt_b,0.15,500
+ai_manager_chasing,AI 经理落后追分,"manager: 70' 落后 → 边后卫内收/心态 extreme_attacking","manager: 中性临场",cross 量与 late_box run_trigger 上升（3-2-5 形状涌现）,a_gt_b,0.2,500

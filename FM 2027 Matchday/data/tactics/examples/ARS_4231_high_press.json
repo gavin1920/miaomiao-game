@@ -1,0 +1,69 @@
+{
+  "id": "ARS_4231_high_press_v0",
+  "club": "ARS",
+  "name": "阿森纳 4-2-3-1 高位压迫",
+  "version": "v0.2",
+  "formation": "4-2-3-1",
+  "mentality": "attacking",
+  "instructions": {
+    "in": {
+      "width": "wide",
+      "buildup": "short",
+      "tempo": "standard",
+      "crossing": "mixed",
+      "final_third_play": "penetrate",
+      "short_pass_chains": "on",
+      "time_wasting": "off"
+    },
+    "out": {
+      "def_line": "high",
+      "def_width": "standard",
+      "press_intensity": "very_high",
+      "press_trigger": "high_field",
+      "tackling": "normal",
+      "offside_trap": "on",
+      "counter_press": "on",
+      "counter": "on",
+      "gk_distribution": "short",
+      "press_gk": "on"
+    }
+  },
+  "roles": {
+    "GK": "GK:de",
+    "DR": "FB:su",
+    "DCR": "CD:de",
+    "DCL": "BPD:de",
+    "DL": "FB:su",
+    "DML": "DLP:de",
+    "DMR": "B2B:su",
+    "AMR": "IF:at",
+    "AMC": "APa:at",
+    "AML": "W:at",
+    "ST": "AF:at"
+  },
+  "lineup": {
+    "GK": "ARS01",
+    "DR": "ARS08",
+    "DCR": "ARS04",
+    "DCL": "ARS06",
+    "DL": "ARS09",
+    "DML": "ARS12",
+    "DMR": "ARS13",
+    "AMR": "ARS19",
+    "AMC": "ARS15",
+    "AML": "ARS20",
+    "ST": "ARS23"
+  },
+  "set_pieces": {
+    "corner_atk": "front_post_crash",
+    "corner_def": "zonal_mixed",
+    "fk_near": "wall_route",
+    "fk_deep": "long_ball",
+    "throw_in": "quick_throw",
+    "corner_taker": "ARS15",
+    "fk_taker": "ARS17",
+    "penalties_order": ["ARS17", "ARS15", "ARS23", "ARS19"]
+  },
+  "player_overrides": [],
+  "notes": "示例战术包（阵容基准：ARS.csv v0.2，2026-27 班底）。Saka 内切(IF:at，特性『喜欢内切』) + Ødegaard 前腰组织(APa:at，特性『喜欢直塞身后』) + Martinelli 拉边(W:at)；双后腰 Zubimendi 拖后组织(DLP:de)、Rice 全能覆盖(B2B:su)；全队高压(offside_trap+counter_press)。定位球主罚按 ARS.csv 属性列自动排序：任意球 Eze(free_kicks 72)，角球 Ødegaard/Eze(55，取 Ødegaard)，点球顺位 Eze(75)→Ødegaard(70)→Gyökeres(70)→Saka(65)。"
+}

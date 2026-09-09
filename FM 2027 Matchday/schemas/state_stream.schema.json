@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fm2027.matchday/schemas/state_stream.schema.json",
+  "title": "State Stream 仿真核→呈现层状态流",
+  "description": "仿真核每 tick（25Hz / 40ms）输出的唯一接口（docs/03 §十三）。呈现层、转播导演、图文包装、音频全部只消费本结构 + 遥测旁路。状态流同时落盘 → 回放系统免费获得。坐标系：米制，标准场 105×68。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["tick", "phase", "clock", "ball", "players", "events"],
+  "properties": {
+    "tick": { "type": "integer", "minimum": 0, "description": "仿真 tick 序号（25Hz，90 分钟 ≈ 135000 tick）" },
+    "phase": { "type": "string", "description": "比赛状态机当前状态（docs/03 §二）", "enum": ["kickoff", "open_play", "throw_in", "goal_kick", "corner", "free_kick", "penalty", "gk_possession", "goal_celebration", "injury_stop", "halftime", "fulltime"] },
+    "clock": { "type": "string", "pattern": "^\\d{2}:\\d{2}$", "description": "比赛时钟 MM:SS（含补时）" },
+    "ball": {
+      "type": "object", "additionalProperties": false,
+      "required": ["p", "v", "spin"],
+      "properties": {
+        "p": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3, "description": "位置 [x, y, z]（米，z=离地高度）" },
+        "v": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3, "description": "速度 [vx, vy, vz]（m/s）" },
+        "spin": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3, "description": "自旋 [ωx, ωy, ωz]（rad/s，马格努斯弧线的来源）" }
+      }
+    },
+    "players": {
+      "type": "array", "minItems": 22, "maxItems": 22,
+      "description": "场上 22 名球员（含红牌罚下时以在场标记为准）",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "p", "heading", "speed", "action", "has_ball", "stamina"],
+        "properties": {
+          "id": { "type": "integer", "description": "球员 id（data/players/{club}.csv）" },
+          "p": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2, "description": "平面位置 [x, y]（米）" },
+          "heading": { "type": "number", "minimum": 0, "maximum": 360, "description": "朝向（度）" },
+          "speed": { "type": "number", "minimum": 0, "maximum": 13, "description": "当前速度（m/s）" },
+          "action": { "type": "string", "description": "当前动作（呈现层动画机的驱动输入）", "enum": ["idle", "jog", "run", "sprint", "decel", "dribble", "tackle", "aerial_challenge", "block", "fall", "gk_dive", "gk_hold", "gk_distribute", "set_piece_ready"] },
+          "has_ball": { "type": "boolean" },
+          "stamina": { "type": "number", "minimum": 0, "maximum": 1, "description": "剩余体能（1=满）" }
+        }
+      }
+    },
+    "events": {
+      "type": "array",
+      "description": "本 tick 产生的事件；type 必须 ⊆ schemas/telemetry_events.json 的词表（22 个）",
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": { "type": "string", "description": "事件类型（telemetry_events.json 词表）" }
+        }
+      }
+    }
+  }
+}

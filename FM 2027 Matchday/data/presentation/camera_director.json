@@ -1,0 +1,36 @@
+{
+  "version": "v0.1",
+  "comment": "转播导演状态机配置（docs/04 §转播导演）。消费状态流 + 遥测事件自动切机位；事件 id 只能用 schemas/telemetry_events.json 词表。防眩晕：最小停留 8s、硬切+2帧黑场、无漂移运镜。",
+  "rules": {
+    "min_dwell_s": 8,
+    "cut": "hard_cut_black_2f",
+    "lull_threshold_s": 180,
+    "note": "平淡期判定：连续 180s 无 shot/goal/card/set_piece_awarded 等高显著事件 → 切 cutaway_lull"
+  },
+  "states": [
+    { "id": "tactical_wide", "name": "高位战术广角", "camera": "高位广角（能看清 22 人阵型——战术玩家的需求）",
+      "enter": { "on": "match_phase_change", "when": "phase=open_play 或默认" }, "exit": "任一更高优先级状态触发", "priority": 0 },
+    { "id": "build_up_track", "name": "推进追踪", "camera": "侧向追踪镜头，视角放低，速度感↑",
+      "enter": { "on": "pass_completed", "when": "连续 ≥3 次向前完成且球过中线" }, "exit": "丢球(turnover)或进入前场1/3", "priority": 1, "min_dwell_s": 8 },
+    { "id": "final_third_low", "name": "前场低机位", "camera": "侧向低机位追踪",
+      "enter": { "on": "match_phase_change", "when": "球进入进攻三区" }, "exit": "球权丢失回到中场 / 禁区机会", "priority": 2, "min_dwell_s": 8 },
+    { "id": "box_chance", "name": "禁区机会近景", "camera": "近景低机位 + 慢动作候选",
+      "enter": { "on": "shot", "when": "origin 在禁区内" }, "exit": "死球 / save/goal 处理完毕", "priority": 5, "min_dwell_s": 8 },
+    { "id": "deadball_setup", "name": "死球站位特写", "camera": "站位广角→主罚者特写",
+      "enter": { "on": "set_piece_awarded" }, "exit": "set_piece_taken", "priority": 3, "min_dwell_s": 6 },
+    { "id": "deadball_taker", "name": "罚球者特写", "camera": "主罚者面部特写",
+      "enter": { "on": "set_piece_taken", "when": "kind=corner|free_kick|penalty 前 2s" }, "exit": "球开出后切跟随", "priority": 3, "min_dwell_s": 6 },
+    { "id": "goal_live", "name": "进球瞬间", "camera": "进球机位保持",
+      "enter": { "on": "goal" }, "exit": "1.5s 后切 goal_replay", "priority": 8, "min_dwell_s": 2 },
+    { "id": "goal_replay", "name": "进球多机位回放", "camera": "3 机位序列：全景/低机位/射手特写 + 慢镜",
+      "enter": { "on": "goal", "when": "goal_live 结束后" }, "exit": "回放序列结束 → tactical_wide", "priority": 7, "min_dwell_s": 12 },
+    { "id": "boards_halftime", "name": "半场图版", "camera": "图版全屏序列",
+      "enter": { "on": "match_phase_change", "when": "phase=halftime" }, "exit": "下半场开球", "priority": 6, "min_dwell_s": 20 },
+    { "id": "boards_fulltime", "name": "全场图版", "camera": "图版全屏序列",
+      "enter": { "on": "match_phase_change", "when": "phase=fulltime" }, "exit": "终", "priority": 9, "min_dwell_s": 20 },
+    { "id": "cutaway_lull", "name": "平淡期切镜", "camera": "教练席/球迷/球员特写；字幕用 manager_decision.reason_tag",
+      "enter": { "on": "manager_decision", "when": "rules.lull_threshold_s 达标或刚发生 manager_decision" }, "exit": "任一高显著事件（shot/goal/card）", "priority": 1, "min_dwell_s": 8 },
+    { "id": "tactical_lock", "name": "玩家锁定机位", "camera": "用户选择（战术视角 = FM 用户舒适区）",
+      "enter": { "on": "ui_lock_camera" }, "exit": "用户解锁；导演对除 goal 外事件静默", "priority": 10 }
+  ]
+}

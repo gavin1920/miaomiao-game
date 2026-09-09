@@ -1,0 +1,50 @@
+{
+  "version": "v0.1",
+  "comment": "定位球预设目录（对应 docs/02 §六）。v1 预设制：每队攻防各配一套；主罚人按属性自动排序，可手动指定。走位在仿真核内为脚本化 PlayScript，执行走属性化通用模型（docs/03 §十二）。",
+  "catalogs": {
+    "corner_atk": {
+      "zh": "角球（进攻）",
+      "options": [
+        { "id": "front_post_crash", "zh": "前点包抄", "desc": "近门柱 2-3 人前叉冲抢，后点留保护" },
+        { "id": "back_post_power", "zh": "后点强攻", "desc": "高中锋/中卫聚后点，前点挡拆开路线" },
+        { "id": "short_routine", "zh": "近门柱短角球战术", "desc": "短角球引出防守人，再起球或禁区前沿重炮" }
+      ]
+    },
+    "corner_def": {
+      "zh": "角球（防守）",
+      "options": [
+        { "id": "zonal_mixed", "zh": "区域混合", "desc": "门前 6 秒区区域联防 + 关键人盯人" },
+        { "id": "man_mark_all", "zh": "全人盯人", "desc": "逐人对位，防空更死，易被挡拆" },
+        { "id": "front_block", "zh": "前点挡拆", "desc": "前点站桩封堵近角球路，1 人留给短角球" }
+      ]
+    },
+    "fk_near": {
+      "zh": "任意球（射门距离）",
+      "options": [
+        { "id": "direct_shot", "zh": "直接射门", "desc": "按 Free Kick 属性评估直接攻门" },
+        { "id": "wall_route", "zh": "人墙配合直塞", "desc": "假射真传，人墙身后直塞/横拨起球" },
+        { "id": "cross_45", "zh": "45° 传中", "desc": "斜 45° 起球找包抄点" }
+      ]
+    },
+    "fk_deep": {
+      "zh": "任意球（远离球门）",
+      "options": [
+        { "id": "long_ball", "zh": "长传进禁区", "desc": "直接吊禁区找高点" },
+        { "id": "quick_restart", "zh": "快发", "desc": "防守未落位时快发（Decisions 决定是否看到机会，docs/03 §十二）" }
+      ]
+    },
+    "throw_in": {
+      "zh": "界外球",
+      "options": [
+        { "id": "quick_throw", "zh": "快掷", "desc": "就近快发维持节奏" },
+        { "id": "long_grenade", "zh": "手榴弹", "desc": "长掷进禁区，需主罚人 long_throws ≥ 75（01 §十 特性「大力手抛球」加分）", "requires": { "attribute": "long_throws", "min": 75 } }
+      ]
+    },
+    "penalties": {
+      "zh": "点球",
+      "options": [
+        { "id": "auto_order", "zh": "按 Penalties 属性自动排序", "desc": "战术包内 penalties_order 为球员 id 有序列表；压力修正由 Composure 再放大（01 §五）" }
+      ]
+    }
+  }
+}

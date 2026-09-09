@@ -1,0 +1,21 @@
+{
+  "version": "v0.1",
+  "comment": "图文包装面板目录（docs/04 §图文包装）。全部数据来自仿真遥测（天然真实）；data_events 引用的遥测事件 id ⊆ schemas/telemetry_events.json 词表。",
+  "always_on": ["scorebug"],
+  "panels": [
+    { "id": "scorebug", "zh": "转播级比分条", "trigger": "常驻", "duration_s": null, "data_events": [], "note": "队徽/比分/时钟 + 进球/红牌瞬时弹图" },
+    { "id": "goal_card", "zh": "进球弹图", "trigger": "on: goal", "duration_s": 6, "data_events": ["goal"], "note": "射手/助攻/分钟/xG" },
+    { "id": "red_card", "zh": "红牌弹图", "trigger": "on: card(type=red)", "duration_s": 6, "data_events": ["card"], "note": "球员/原因标签" },
+    { "id": "live_stats_strip", "zh": "实时数据条", "trigger": "导演平淡期切出（cutaway_lull 期间）", "duration_s": 10, "data_events": ["pass_attempt", "pass_completed", "shot"], "note": "控球率、射门数、角球数" },
+    { "id": "xg_curve", "zh": "xG 曲线", "trigger": "sequence: halftime/fulltime", "duration_s": 8, "data_events": ["shot"], "note": "双方累计 xG 随时间曲线 + 进球标注" },
+    { "id": "shot_map", "zh": "射门落点图", "trigger": "sequence: halftime/fulltime", "duration_s": 8, "data_events": ["shot", "goal"], "note": "落点×xG 大小×结果着色" },
+    { "id": "pass_network", "zh": "传球网络", "trigger": "sequence: halftime/fulltime", "duration_s": 8, "data_events": ["pass_completed"], "note": "连线粗细=次数，可看出出球结构与组织核心" },
+    { "id": "heatmap_compare", "zh": "双球员热图对比", "trigger": "sequence: halftime/fulltime", "duration_s": 8, "data_events": ["press_trigger", "run_trigger"], "note": "战术玩家最爱的对比位（如双方 DLP/边路）" },
+    { "id": "sub_timeline", "zh": "AI 经理换人时间线", "trigger": "sequence: halftime/fulltime", "duration_s": 10, "data_events": ["substitution", "manager_decision"], "note": "附 decision reason_tag——'为什么这么换'对外可解释" },
+    { "id": "match_summary", "zh": "全场总结板", "trigger": "sequence: fulltime", "duration_s": 15, "data_events": ["goal", "card", "shot"], "note": "比分/进球列表/关键统计" }
+  ],
+  "sequences": {
+    "halftime": ["xg_curve", "shot_map", "pass_network", "heatmap_compare", "sub_timeline"],
+    "fulltime": ["xg_curve", "shot_map", "pass_network", "heatmap_compare", "sub_timeline", "match_summary"]
+  }
+}

@@ -1,0 +1,9 @@
+metric,unit,min,max,source,notes
+goals_per_match,goals,2.6,3.0,"StatsBomb Open Data / FBref（英超量级）",场均进球；含运动战与定位球
+shots_per_match,shots,11,13,"StatsBomb Open Data / FBref（英超量级）",场均射门
+sot_per_match,shots,4,5,"StatsBomb Open Data / FBref（英超量级）",场均射正
+pass_accuracy_pct,percent,78,86,"StatsBomb Open Data / FBref（英超量级）",按风格分化：传控队取上沿、直传队取下沿
+corners_per_match,count,3,7,"StatsBomb Open Data / FBref（英超量级）",场均角球（5±2）
+fouls_per_match,count,10,13,"StatsBomb Open Data / FBref（英超量级）",场均犯规
+yellows_per_match,count,3,4.5,"StatsBomb Open Data / FBref（英超量级）",场均黄牌
+possession_rank_corr,pearson_r,0.3,1.0,"StatsBomb Open Data / FBref（英超量级）",控球率 vs 排名正相关（传控强队偏高）

@@ -1,0 +1,62 @@
+{
+  "version": "v0.1",
+  "comment": "动作-事件 → 动画变体池映射（docs/04 §动画系统）。动作 enum 与 schemas/state_stream.schema.json 一致；遥测事件 id 与 schemas/telemetry_events.json 一致。modulators 键必须为 data/README.md 的属性列名或 traits 词表，属性高 → 对应变体权重上移。",
+  "locomotion": {
+    "note": "位移类动作由状态流 players[].action 驱动；步幅步频与骨骼按属性参数化，让 500 人不像复制人",
+    "stride_by": ["pace", "acceleration"],
+    "skeleton_scale_by": ["height_cm", "weight_kg"],
+    "actions": {
+      "idle": "站立/观察待机池",
+      "jog": "慢跑循环",
+      "run": "跑动循环",
+      "sprint": "冲刺循环（身体前倾加大，由 pace 调制步频）",
+      "decel": "减速/急停（agility/balance 调制重心补偿）",
+      "dribble": "持球跑（触球步点与球-脚同步联动）",
+      "tackle": "抢断动作（见 event_variants.tackle）",
+      "aerial_challenge": "起跳争顶（jumping 调制起跳高度表现）",
+      "block": "封堵（bravery 调制飞身程度）",
+      "fall": "倒地（对抗/犯规结果演出）",
+      "gk_dive": "门将扑救（见 gk_saves）",
+      "gk_hold": "门将抱球",
+      "gk_distribute": "门将发球（手抛/开大脚，throwing/kicking 调制）",
+      "set_piece_ready": "定位球站位等待"
+    }
+  },
+  "event_variants": [
+    { "event": "shot", "variants": [
+      { "id": "instep_drive", "zh": "正脚背抽射", "base_weight": 0.35, "modulators": { "finishing": "↑ 权重上移", "technique": "↑" }, "conditions": ["prep_time ≥ 0.6s", "身体姿态允许"] },
+      { "id": "placed_low", "zh": "推射低平", "base_weight": 0.3, "modulators": { "composure": "↑", "finishing": "↑" }, "conditions": [] },
+      { "id": "toe_poke", "zh": "捅射", "base_weight": 0.2, "modulators": { "anticipation": "↑" }, "conditions": ["prep_time < 0.3s（低准备度射门）"] },
+      { "id": "chip", "zh": "吊射", "base_weight": 0.15, "modulators": { "technique": "↑", "flair": "↑" }, "conditions": ["门将站位靠前"] } ] },
+    { "event": "duel:type=tackle", "variants": [
+      { "id": "poke_tackle", "zh": "捅球", "base_weight": 0.4, "modulators": { "tackling": "↑" }, "conditions": ["正面/侧方接近"] },
+      { "id": "standing_block", "zh": "站身卡位", "base_weight": 0.3, "modulators": { "strength": "↑", "positioning": "↑" }, "conditions": [] },
+      { "id": "slide_tackle", "zh": "铲球", "base_weight": 0.3, "modulators": { "aggression": "↑", "bravery": "↑" }, "conditions": ["tackling ≥ 阈值；失败→foul/牌分支"] } ] },
+    { "event": "dribble", "variants": [
+      { "id": "body_feint", "zh": "身体假晃", "base_weight": 0.4, "modulators": { "dribbling": "↑" }, "conditions": [] },
+      { "id": "skill_move", "zh": "花式过人", "base_weight": 0.2, "modulators": { "flair": "↑", "agility": "↑" }, "conditions": ["flair ≥ 阈值解锁花式池；特性『爱盘带过人』权重 ×1.4"] },
+      { "id": "knock_and_run", "zh": "趟球加速", "base_weight": 0.4, "modulators": { "acceleration": "↑", "pace": "↑" }, "conditions": ["身前空间大"] } ] },
+    { "event": "set_piece_taken:kind=throw_in", "variants": [
+      { "id": "quick_throw", "zh": "快掷", "base_weight": 0.6, "modulators": { "throwing": "↑" }, "conditions": [] },
+      { "id": "long_grenade", "zh": "手榴弹长掷", "base_weight": 0.2, "modulators": { "long_throws": "↑" }, "conditions": ["long_throws ≥ 75 或特性『大力手抛球』"] } ] },
+    { "event": "goal", "variants": [
+      { "id": "knee_slide", "zh": "滑跪", "base_weight": 0.35, "modulators": { "flair": "↑" }, "conditions": [] },
+      { "id": "team_hug", "zh": "队友击掌拥抱", "base_weight": 0.35, "modulators": { "teamwork": "↑" }, "conditions": [] },
+      { "id": "shirt_over_head", "zh": "球衣套头", "base_weight": 0.15, "modulators": { "determination": "↑" }, "conditions": ["绝杀/补时进球加权"] },
+      { "id": "signature", "zh": "签名庆祝", "base_weight": 0.15, "modulators": {}, "conditions": ["v2：为少数球星配专属庆祝池"] } ] }
+  ],
+  "gk_saves": {
+    "note": "扑救按 方向×高度×球速 分型（docs/04），由 save/gk_action 事件参数驱动，不做万能扑救动画",
+    "variants": [
+      { "id": "near_post_reflex", "zh": "近角反射", "modulators": { "reflexes": "↑" }, "conditions": ["距离 <12m 且球速高"] },
+      { "id": "far_post_dive", "zh": "远角飞身", "modulators": { "aerial_reach": "↑", "agility": "↑" }, "conditions": [] },
+      { "id": "one_on_one_block", "zh": "单刀封堵", "modulators": { "one_on_ones": "↑" }, "conditions": ["单刀场景"] },
+      { "id": "claim_high", "zh": "摘高球", "modulators": { "command_of_area": "↑", "handling": "↑" }, "conditions": ["传中落点在出击半径内"] }
+    ]
+  },
+  "individual_layer": {
+    "note": "个体差异层：属性→表现参数（步幅/骨骼/重心补偿）；签名动作池 v2",
+    "signature_actions": "v2",
+    "trait_overlays": "特性（01 §十）直接叠加到变体权重：如『贴地传中』→低平传中变体 ×1.5"
+  }
+}

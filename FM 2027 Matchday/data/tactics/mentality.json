@@ -1,0 +1,13 @@
+{
+  "version": "v0.1",
+  "comment": "心态 7 档预设（对应 docs/02 §二）。数值为全局参数预设偏移；角色职责在此基础上二次偏移。press_trigger_line 词表：own_box_edge 本方禁区前沿 / own_third 本方1/3 / halfway_deep 中线后 / halfway 中线 / halfway_high 中线前 / opp_third 对方1/3 / opp_box_edge 对方禁区前沿。",
+  "presets": [
+    { "id": "extreme_defensive", "zh": "极端防守", "def_line_height_m": 28, "press_trigger_line": "own_box_edge", "forward_risk_weight": 0.5,  "decision_window_s": 1.4, "width_m": 32, "press_intensity": 1 },
+    { "id": "defensive",         "zh": "防守",     "def_line_height_m": 31, "press_trigger_line": "own_third",    "forward_risk_weight": 0.7,  "decision_window_s": 1.2, "width_m": 34, "press_intensity": 2 },
+    { "id": "cautious",          "zh": "稳健",     "def_line_height_m": 34, "press_trigger_line": "halfway_deep", "forward_risk_weight": 0.85, "decision_window_s": 1.1, "width_m": 36, "press_intensity": 2 },
+    { "id": "balanced",          "zh": "平衡",     "def_line_height_m": 37, "press_trigger_line": "halfway",      "forward_risk_weight": 1.0,  "decision_window_s": 1.0, "width_m": 38, "press_intensity": 3 },
+    { "id": "positive",          "zh": "积极",     "def_line_height_m": 40, "press_trigger_line": "halfway_high", "forward_risk_weight": 1.2,  "decision_window_s": 0.9, "width_m": 40, "press_intensity": 4 },
+    { "id": "attacking",         "zh": "进攻",     "def_line_height_m": 43, "press_trigger_line": "opp_third",    "forward_risk_weight": 1.4,  "decision_window_s": 0.8, "width_m": 42, "press_intensity": 4 },
+    { "id": "extreme_attacking", "zh": "极端进攻", "def_line_height_m": 46, "press_trigger_line": "opp_box_edge", "forward_risk_weight": 1.6,  "decision_window_s": 0.7, "width_m": 44, "press_intensity": 5 }
+  ]
+}

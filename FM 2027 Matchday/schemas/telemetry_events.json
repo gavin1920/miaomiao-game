@@ -1,0 +1,28 @@
+{
+  "version": "v0.1",
+  "comment": "遥测事件词表（docs/03 §十三 旁路输出）。单一事实来源：仿真核产生的所有事件 type、状态流 events[]、转播导演/图文包装/音频的触发引用（data/presentation/）都必须 ⊆ 本词表。consumers 取值：sim 仿真遥测 / broadcast 转播导演 / graphics 图文包装 / audio 音频 / ui 界面。",
+  "events": [
+    { "id": "match_phase_change", "zh": "比赛阶段切换", "fields": { "from": "phase", "to": "phase" }, "consumers": ["sim", "broadcast", "graphics"] },
+    { "id": "pass_attempt", "zh": "传球尝试", "fields": { "from": "球员id", "to": "球员id", "intent": "safe|through|switch|long|cross", "quality": "0-1" }, "consumers": ["sim", "broadcast", "graphics"] },
+    { "id": "pass_completed", "zh": "传球完成", "fields": { "from": "球员id", "to": "球员id" }, "consumers": ["sim", "graphics"] },
+    { "id": "turnover", "zh": "球权转换", "fields": { "possession_from": "队id", "possession_to": "队id", "zone": "区域", "cause": "tackle|interception|bad_touch|out_of_play" }, "consumers": ["sim", "broadcast", "graphics"] },
+    { "id": "interception", "zh": "拦截", "fields": { "player": "球员id" }, "consumers": ["sim", "graphics"] },
+    { "id": "ball_recovery", "zh": "夺回球权", "fields": { "player": "球员id", "zone": "区域", "source": "counter_press|tackle|interception|loose" }, "consumers": ["sim", "graphics"] },
+    { "id": "shot", "zh": "射门", "fields": { "shooter": "球员id", "origin": "[x,y]", "outcome": "on_target|off_target|blocked|saved|goal", "xg": "0-1", "prep_time": "秒", "body_part": "foot|head|other" }, "consumers": ["sim", "broadcast", "graphics", "audio"] },
+    { "id": "goal", "zh": "进球", "fields": { "scorer": "球员id", "assister": "球员id|null", "phase": "open_play|set_piece|counter", "xg": "0-1" }, "consumers": ["sim", "broadcast", "graphics", "audio", "ui"] },
+    { "id": "save", "zh": "扑救", "fields": { "gk": "球员id", "shot_ref": "关联 shot 事件", "handled": "caught|parried|deflected" }, "consumers": ["sim", "broadcast", "audio", "ui"] },
+    { "id": "duel", "zh": "对抗", "fields": { "subtype": "tackle|aerial|shoulder|block", "attacker": "球员id", "defender": "球员id", "winner": "球员id", "foul": "bool", "card": "none|yellow|red" }, "consumers": ["sim", "broadcast", "graphics"] },
+    { "id": "foul", "zh": "犯规", "fields": { "player": "球员id", "victim": "球员id", "danger": "低|中|高" }, "consumers": ["sim", "broadcast", "graphics"] },
+    { "id": "card", "zh": "出牌", "fields": { "player": "球员id", "type": "yellow|red", "reason": "标签" }, "consumers": ["sim", "broadcast", "graphics", "audio", "ui"] },
+    { "id": "offside", "zh": "越位", "fields": { "player": "球员id" }, "consumers": ["sim", "broadcast", "graphics"] },
+    { "id": "injury", "zh": "受伤", "fields": { "player": "球员id", "severity": "轻|中|重" }, "consumers": ["sim", "ui"] },
+    { "id": "set_piece_awarded", "zh": "判给定位球", "fields": { "kind": "corner|free_kick|throw_in|penalty|goal_kick", "team": "队id", "origin": "[x,y]" }, "consumers": ["sim", "broadcast", "graphics"] },
+    { "id": "set_piece_taken", "zh": "定位球开出", "fields": { "kind": "corner|free_kick|throw_in|penalty|goal_kick", "taker": "球员id", "target": "球员id|区域" }, "consumers": ["sim", "broadcast", "audio"] },
+    { "id": "press_trigger", "zh": "逼抢发起", "fields": { "team": "队id", "initiator": "球员id", "zone": "区域", "structure": "1v1|double|shadow" }, "consumers": ["sim", "graphics"] },
+    { "id": "run_trigger", "zh": "跑位触发", "fields": { "player": "球员id", "kind": "behind|overlap|underlap|drop|decoy|late_box" }, "consumers": ["sim", "graphics"] },
+    { "id": "gk_action", "zh": "门将动作", "fields": { "gk": "球员id", "kind": "claim|punch|parry|distribute|sweep" }, "consumers": ["sim", "broadcast", "audio"] },
+    { "id": "substitution", "zh": "换人", "fields": { "team": "队id", "out": "球员id", "in": "球员id", "minute": "分钟", "reason": "tactical|injury|fatigue|losing|protect" }, "consumers": ["sim", "broadcast", "graphics", "audio", "ui"] },
+    { "id": "manager_decision", "zh": "AI 经理决策", "fields": { "team": "队id", "kind": "mentality|shape|press|instruction|player_message", "detail": "说明", "reason_tag": "理由标签（字幕/解说素材）" }, "consumers": ["sim", "broadcast", "graphics", "audio", "ui"] },
+    { "id": "fatigue_flag", "zh": "体能预警", "fields": { "player": "球员id", "level": "low|critical" }, "consumers": ["sim", "ui"] }
+  ]
+}

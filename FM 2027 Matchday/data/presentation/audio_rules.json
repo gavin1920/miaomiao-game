@@ -1,0 +1,37 @@
+{
+  "version": "v0.1",
+  "comment": "音频反应规则（docs/04 §音频）。紧张度模型驱动人群分层音量；触球声按遥测/动作分型。引用事件 id ⊆ schemas/telemetry_events.json。",
+  "tension_model": {
+    "note": "紧张度 ∈ [0,1] 连续计算，驱动人群音量/语气分层插值",
+    "inputs": {
+      "ball_in_final_third": "球在前场 1/3（尤其禁区）",
+      "pass_streak": "一方连续传递次数（倒脚拉扯的压迫感）",
+      "score_gap": "分差接近度（≤1 球紧张度基准上移）",
+      "minute": "比赛时段（70' 后与补时加权）"
+    },
+    "mapping": "0–0.3 日常 / 0.3–0.6 低频嗡鸣渐起 / 0.6–0.85 屏息（切近景时机） / 0.85+ 一触即发"
+  },
+  "layers": [
+    { "id": "ambient", "zh": "环境底噪", "intensity_driver": "tension 0–0.3 段，随观众规模微调" },
+    { "id": "murmur", "zh": "人群低语", "intensity_driver": "tension 0.2–0.5" },
+    { "id": "tension_lowfreq", "zh": "紧张低频嗡鸣", "intensity_driver": "tension 0.5–0.85" },
+    { "id": "roar_goal", "zh": "进球爆发层", "intensity_driver": "on: goal（主队/客队音色区分，客队按上座比例衰减）" },
+    { "id": "roar_chance", "zh": "射门惊呼", "intensity_driver": "on: shot（miss/save/goal 分别语气）" },
+    { "id": "whistle", "zh": "裁判哨声", "intensity_driver": "on: foul/card/match_phase_change（死球）" }
+  ],
+  "touch_sounds": [
+    { "event": "pass_attempt", "sound": "传球触球声（短促）", "note": "力度按球速" },
+    { "event": "shot", "sound": "射门击球声（厚重）", "note": "正脚背/推射分型呼应动画变体" },
+    { "event": "save", "sound": "手套接球/扑出", "note": "caught/parried 分型" },
+    { "event": "duel:type=block", "sound": "封堵闷响" },
+    { "event": "gk_action", "sound": "摘球/拳击", "note": "claim/punch 分型" },
+    { "event": "goal", "sound": "球网声", "note": "与人群爆发层同步" },
+    { "event": "match_phase_change", "sound": "草皮摩擦/跑动环境声回归", "note": "死球→运动战过渡" }
+  ],
+  "set_piece_sounds": {
+    "note": "定位球前氛围收敛（on: set_piece_awarded），罚球瞬间释放",
+    "on_award": "人群收敛 → 屏息（tension 强制抬升）",
+    "on_taken": "按结果回落/爆发"
+  },
+  "team_atmosphere": "队伍助威曲/队歌化氛围：化名球队原创音乐，规避版权（docs/04）"
+}

@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fm2027.matchday/schemas/simparams.schema.json",
+  "title": "SimParams 战术编译器输出契约",
+  "description": "战术编译器（Tactics → SimParams，docs/02 §八）的输出、仿真核的输入。权威字段名：docs/02 §八 与 data/tactics/instructions.json 的 compile 字段均引用本 schema。比赛内热替换的单位就是整份 SimParams。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "mentality", "def_line_base_m", "def_line_stretch", "press", "buildup",
+    "tempo", "width_m", "counter_press", "counter", "offside_trap",
+    "roles", "set_pieces", "familiarity"
+  ],
+  "properties": {
+    "mentality": { "type": "string", "description": "心态档（预设 id，data/tactics/mentality.json）", "enum": ["extreme_defensive", "defensive", "cautious", "balanced", "positive", "attacking", "extreme_attacking"] },
+    "def_line_base_m": { "type": "number", "minimum": 20, "maximum": 50, "description": "防线基准高度，距本方球门（米）；心态基准 ± 指令偏移" },
+    "def_line_stretch": { "type": "number", "minimum": 0, "maximum": 1, "description": "防线拉伸度（后卫线随球前压/回撤的弹性）" },
+    "press": {
+      "type": "object", "additionalProperties": false,
+      "required": ["trigger_line", "trigger_dist_m", "count", "intensity"],
+      "properties": {
+        "trigger_line": { "type": "string", "description": "优先围抢的球场区域", "enum": ["own_box_edge", "own_third", "halfway_deep", "halfway", "halfway_high", "opp_third", "opp_box_edge"] },
+        "trigger_dist_m": { "type": "number", "minimum": 8, "maximum": 22, "description": "逼抢启动距离（米）" },
+        "count": { "type": "integer", "minimum": 1, "maximum": 3, "description": "同时上抢人数" },
+        "intensity": { "type": "number", "minimum": 0, "maximum": 1, "description": "逼抢强度归一化" }
+      }
+    },
+    "buildup": {
+      "type": "object", "additionalProperties": false,
+      "required": ["short_pass_bias", "long_ball_weight", "gk_distribution"],
+      "properties": {
+        "short_pass_bias": { "type": "number", "minimum": 0, "maximum": 1, "description": "短传偏好（高=宁可回传不冒险）" },
+        "long_ball_weight": { "type": "number", "minimum": 0, "maximum": 2, "description": "长传动作权重乘数" },
+        "gk_distribution": { "type": "string", "description": "门将发球方式", "enum": ["short", "mixed", "long"] }
+      }
+    },
+    "tempo": {
+      "type": "object", "additionalProperties": false,
+      "required": ["decision_window_s", "forward_risk_weight"],
+      "properties": {
+        "decision_window_s": { "type": "number", "minimum": 0.5, "maximum": 2.0, "description": "持球决策时间窗（秒）" },
+        "forward_risk_weight": { "type": "number", "minimum": 0.3, "maximum": 2.0, "description": "向前传风险权重乘数" }
+      }
+    },
+    "width_m": { "type": "number", "minimum": 28, "maximum": 46, "description": "阵型宽度（米）" },
+    "counter_press": {
+      "type": "object", "additionalProperties": false,
+      "required": ["enabled", "radius_m", "count"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "radius_m": { "type": "number", "minimum": 8, "maximum": 15, "description": "丢球点反抢半径（米）" },
+        "count": { "type": "integer", "minimum": 2, "maximum": 3, "description": "立即反抢人数" }
+      }
+    },
+    "counter": {
+      "type": "object", "additionalProperties": false,
+      "required": ["enabled", "window_s"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "window_s": { "type": "number", "minimum": 4, "maximum": 8, "description": "断球后反击窗口（秒）：窗口内直塞与冲刺权重 ×2" }
+      }
+    },
+    "offside_trap": { "type": "boolean", "description": "越位战术开关：后卫线协同上提造越位" },
+    "roles": {
+      "type": "array", "minItems": 11, "maxItems": 11,
+      "description": "11 个槽位的角色编译结果（slot 对应 data/tactics/formations.json）",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["slot", "role", "duty", "anchor_fn", "on_ball_weights", "off_ball_rules", "press_priority"],
+        "properties": {
+          "slot": { "type": "string", "description": "槽位 id（如 GK/DCR/AMR）" },
+          "role": { "type": "string", "description": "角色 id（data/tactics/roles.json，27 个）" },
+          "duty": { "type": "string", "description": "职责", "enum": ["de", "su", "at"] },
+          "anchor_fn": { "type": "string", "description": "锚点函数引用：球位 → 目标站位（基准 + 角色偏移 + 职责纵深 ±4m/档）" },
+          "on_ball_weights": { "type": "object", "description": "有球动作效用权重覆盖（键 ⊆ roles.json vocab.on_ball）" },
+          "off_ball_rules": { "type": "array", "items": { "type": "string" }, "description": "无球跑位规则（键 ⊆ roles.json vocab.off_ball）" },
+          "press_priority": { "type": "number", "minimum": 0, "maximum": 2, "description": "逼抢优先级" }
+        }
+      }
+    },
+    "set_pieces": {
+      "type": "object", "additionalProperties": false,
+      "required": ["corner_atk", "corner_def", "fk_near", "fk_deep", "throw_in", "penalties_order"],
+      "properties": {
+        "corner_atk": { "type": "string", "enum": ["front_post_crash", "back_post_power", "short_routine"] },
+        "corner_def": { "type": "string", "enum": ["zonal_mixed", "man_mark_all", "front_block"] },
+        "fk_near": { "type": "string", "enum": ["direct_shot", "wall_route", "cross_45"] },
+        "fk_deep": { "type": "string", "enum": ["long_ball", "quick_restart"] },
+        "throw_in": { "type": "string", "enum": ["quick_throw", "long_grenade"], "description": "long_grenade 需主罚人 long_throws ≥ 75" },
+        "penalties_order": { "type": "array", "items": { "type": "string" }, "description": "点球主罚顺位（球员 id，按 penalties 属性降序）" }
+      }
+    },
+    "familiarity": { "type": "number", "minimum": 0, "maximum": 1, "description": "对本战术包的队伍熟练度（docs/02 §九）：站位误差与传跑协同的折损输入" }
+  }
+}

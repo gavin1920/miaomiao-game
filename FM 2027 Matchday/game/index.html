@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FM 2027 Matchday · 英超梦幻对决</title>
+<link rel="stylesheet" href="css/style.css?v=35">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">⚽ FM 2027 <b>MATCHDAY</b> <span class="sub">英超梦幻对决</span></div>
+  <div class="flow-steps" id="flowSteps">
+    <span data-step="welcome">开局</span><i>›</i>
+    <span data-step="market">转会市场</span><i>›</i>
+    <span data-step="opponent">选择对手</span><i>›</i>
+    <span data-step="lineup">首发阵型</span><i>›</i>
+    <span data-step="tactic">战术板</span><i>›</i>
+    <span data-step="match">比赛日</span><i>›</i>
+    <span data-step="result">复盘</span>
+  </div>
+  <div class="budget-chip" id="budgetChip"></div>
+</header>
+
+<main>
+  <!-- 1 开局 -->
+  <section id="screen-welcome" class="screen active">
+    <div class="hero">
+      <h1>组建你的梦之队<br><em>与英超豪门正面对决</em></h1>
+      <p class="lead">真实德转身价 · 20 支英超球队 · 21 套阵型自由摆放 · 30 个位置角色 · 16 项球队指令<br>
+      战术不是摆设——高位防线会被身后球打穿，疯抢会耗干体能，传中需要有人抢点。</p>
+      <div class="budget-choice" id="budgetChoice"></div>
+      <div class="team-name-row">
+        <label>你的球队名：</label>
+        <input id="teamNameInput" type="text" maxlength="16" value="梦想联">
+      </div>
+      <div class="btn-row">
+        <button class="btn primary big" id="btnStart">开始组建球队</button>
+        <button class="btn big" id="btnContinue" style="display:none">继续上次进度</button>
+      </div>
+      <p class="data-note" id="dataNote"></p>
+    </div>
+  </section>
+
+  <!-- 2 转会市场 -->
+  <section id="screen-market" class="screen">
+    <div class="market-layout">
+      <div class="market-left">
+        <div class="market-tools">
+          <select id="clubFilter"></select>
+          <select id="posFilter">
+            <option value="">全部位置</option>
+            <option value="GK">门将</option>
+            <option value="DF">后卫</option>
+            <option value="MF">中场</option>
+            <option value="FW">前锋</option>
+          </select>
+          <select id="affordFilter">
+            <option value="">全部身价</option>
+            <option value="1">只看买得起的</option>
+          </select>
+          <input id="nameSearch" type="text" placeholder="搜索球员名">
+          <button class="btn small" id="btnScoutXI" title="按位置需求与性价比一键组建 18 人阵容">🔍 球探推荐阵容</button>
+        </div>
+        <div class="player-grid" id="playerGrid"></div>
+      </div>
+      <div class="market-right">
+        <div class="squad-panel">
+          <h3>你的阵容 <span id="squadCount"></span></h3>
+          <div class="budget-bar"><div id="budgetFill"></div></div>
+          <div class="budget-text" id="budgetText"></div>
+          <div class="squad-list" id="squadList"></div>
+          <div class="squad-check" id="squadCheck"></div>
+          <button class="btn primary big wide" id="btnToOpponent" disabled>确定阵容，去挑对手 →</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 选择对手 -->
+  <section id="screen-opponent" class="screen">
+    <h2 class="screen-title">选择你的对手 <small>你签下的球员已从原俱乐部除名——挖空对手也是一种战术</small></h2>
+    <div class="btn-row" style="justify-content:flex-start;margin:0 0 12px">
+      <button class="btn big" id="btnSeasonStart">🏆 10 轮迷你赛季</button>
+      <button class="btn big" id="btnSeasonFull">🌍 完整赛季 · 双循环 40 战（含客场与轮空周）</button>
+    </div>
+    <div class="club-grid" id="clubGrid"></div>
+    <div class="btn-row">
+      <button class="btn" id="btnBackMarket">← 返回转会市场</button>
+    </div>
+  </section>
+
+  <!-- 4 首发与阵型 -->
+  <section id="screen-lineup" class="screen">
+    <div class="lineup-layout">
+      <div class="lineup-left">
+        <div class="formation-picker">
+          <label>阵型（21 套）：</label>
+          <select id="formationSelect"></select>
+          <button class="btn small" id="btnAutoXI">自动排兵</button>
+          <button class="btn small" id="btnLineupBack">← 返回</button>
+        </div>
+        <div class="pitch-wrap"><canvas id="lineupPitch" width="560" height="640"></canvas></div>
+        <p class="hint">点击右侧『场上位置』列表安排球员；角色/职责在战术板里精细调整。</p>
+      </div>
+      <div class="lineup-right">
+        <div class="panel">
+          <h3 id="slotPanelTitle">场上位置</h3>
+          <div id="slotDetail"></div>
+        </div>
+        <div class="panel">
+          <h3>替补席（自动按实力推荐，最多 9 人）</h3>
+          <div id="benchList"></div>
+        </div>
+        <div class="panel">
+          <h3>对手情报</h3>
+          <div id="oppIntel"></div>
+        </div>
+        <button class="btn primary big wide" id="btnToTactic">前往战术板 →</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5 战术板 -->
+  <section id="screen-tactic" class="screen">
+    <div class="tactic-layout">
+      <div class="tactic-left">
+        <div class="formation-picker">
+          <label>阵型：</label>
+          <select id="tacticFormation"></select>
+          <button class="btn small" id="btnAutoTacticXI">重新自动排兵</button>
+          <button class="btn small" id="btnSavePreset">保存战术预设</button>
+          <select id="presetSelect"><option value="">载入预设…</option></select>
+        </div>
+        <div class="pitch-wrap drag" id="tacticPitch"><canvas id="tacticPitchCv" width="560" height="640"></canvas><div id="tacticTokens"></div></div>
+        <p class="hint">按住球员拖动 = 自定义站位（自由阵型）。点击选中后调整角色与职责。</p>
+      </div>
+      <div class="tactic-right">
+        <div class="panel" id="tacticSlotPanel">
+          <h3>角色与职责</h3>
+          <div id="tacticSlotDetail"><p class="hint">点击场上球员token进行配置</p></div>
+        </div>
+        <div class="panel">
+          <h3>球队指令</h3>
+          <div id="instrGrid" class="instr-grid"></div>
+          <div id="toggleGrid" class="toggle-grid"></div>
+        </div>
+        <div class="panel">
+          <h3>定位球与队长</h3>
+          <div id="setPieceGrid" class="instr-grid"></div>
+        </div>
+        <div class="panel advice">
+          <h3>战术分析室</h3>
+          <div id="adviceList"></div>
+        </div>
+        <div class="panel seed-panel">
+          <h3>🎲 比赛 Seed（可选）</h3>
+          <input id="seedInput" type="text" placeholder="留空 = 随机；同 seed + 同阵容同战术 = 同一场比赛">
+          <p class="hint">把同一个 Seed 发给朋友：双方各自排兵布阵打同一场"天选之战"，公平比拼谁的战术更强。</p>
+        </div>
+        <button class="btn primary big wide" id="btnKickoff">🎯 进入比赛日</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6 比赛 -->
+  <section id="screen-match" class="screen">
+    <div class="scoreboard" id="scoreboard">
+      <div class="sb-team" id="sbHome"></div>
+      <div class="sb-mid"><div class="sb-score" id="sbScore">0 - 0</div><div class="sb-clock" id="sbClock">00'</div></div>
+      <div class="sb-team right" id="sbAway"></div>
+    </div>
+    <div class="match-controls">
+      <button class="btn small" id="btnPause">⏸ 暂停</button>
+      <div class="speed-group" id="speedGroup">
+        <button class="btn small" data-speed="1">1×</button>
+        <button class="btn small active" data-speed="2">2×</button>
+        <button class="btn small" data-speed="4">4×</button>
+        <button class="btn small" data-speed="12">极速</button>
+      </div>
+      <button class="btn small active" id="btnSmart" title="无事件时段自动加速，射门/进球自动放慢">⚡ 智能节奏：开</button>
+      <select id="personaSel" class="persona-sel" title="解说人格：进球/红牌等大事件后的解说风格"></select>
+      <div class="live-mini" id="liveMini"></div>
+    </div>
+    <div class="match-layout">
+      <div class="match-center">
+        <div class="pitch-wrap match"><canvas id="matchPitch" width="640" height="560"></canvas></div>
+        <div class="live-stats" id="liveStats"></div>
+      </div>
+      <div class="match-side">
+        <div class="tabs">
+          <button class="tab active" data-tab="feed">解说</button>
+          <button class="tab" data-tab="subs">换人</button>
+          <button class="tab" data-tab="liveTactic">战术</button>
+        </div>
+        <div class="tab-body">
+          <div id="tab-feed" class="tab-pane active"><div id="feed" class="feed"></div></div>
+          <div id="tab-subs" class="tab-pane"><div id="subsPanel"></div></div>
+          <div id="tab-liveTactic" class="tab-pane"><div id="liveTacticPanel"></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal" id="htModal"><div class="modal-box">
+      <h2>半场休息</h2><div id="htStats"></div>
+      <p class="hint">你可以调整任何球队指令（下半场立即生效），也可以趁休息完成换人。</p>
+      <div id="htInstr"></div>
+      <div id="htSubs"></div>
+      <button class="btn primary" id="btnResume2nd">开始下半场</button>
+    </div></div>
+    <div class="modal" id="ftModal"><div class="modal-box">
+      <h2 id="ftTitle">全场结束</h2>
+      <div id="ftMotm"></div>
+      <div id="ftSummary"></div>
+      <button class="btn primary" id="btnToResult">查看完整复盘 →</button>
+    </div></div>
+  </section>
+
+  <!-- 7 复盘 -->
+  <section id="screen-result" class="screen">
+    <h2 class="screen-title" id="resultTitle">赛后复盘</h2>
+    <div id="seedLine" style="margin-bottom:12px"></div>
+    <div class="panel"><h3>比赛时间轴</h3><div id="matchTimeline"></div></div>
+    <div class="result-layout">
+      <div class="panel"><h3>技术统计</h3><div id="statTable"></div></div>
+      <div class="panel"><h3>战术复盘</h3><div id="reviewList"></div></div>
+    </div>
+    <div class="panel"><h3>球员评分</h3><div class="ratings-cols" id="ratingsCols"></div></div>
+    <div class="btn-row">
+      <button class="btn primary big" id="btnAgain">🔥 再战一场（保留阵容）</button>
+      <button class="btn primary big" id="btnSeasonBack" style="display:none">🏆 返回迷你赛季</button>
+      <button class="btn big" id="btnRestart">重新开始</button>
+    </div>
+  </section>
+
+  <!-- 8 赛季中心 -->
+  <section id="screen-season" class="screen">
+    <h2 class="screen-title" id="seasonTitle">赛季 <small>你 + 20 支英超球队，冠军只有一个</small></h2>
+    <div id="seasonNextCard"></div>
+    <div class="season-layout">
+      <div class="panel season-table-panel"><h3>积分榜</h3><div id="seasonTable"></div></div>
+      <div class="season-right">
+        <div class="panel"><h3>赛程与战报</h3><div id="seasonFixtures"></div>
+          <div class="btn-row" style="justify-content:flex-start">
+            <button class="btn primary big wide" id="btnSeasonPlay">▶ 开始下一轮</button>
+            <button class="btn" id="btnSeasonQuit">放弃赛季</button>
+          </div>
+        </div>
+        <div class="panel"><h3>📰 更衣室新闻墙</h3><div id="seasonNews" class="news-wall"></div></div>
+        <div class="season-mini-row">
+          <div class="panel"><h3>👟 射手榜</h3><div id="seasonScorers"></div></div>
+          <div class="panel"><h3>🩹 伤病名单</h3><div id="seasonInjuries"></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="js/data.js?v=35"></script>
+<script src="js/tactics.js?v=35"></script>
+<script src="js/season.js?v=35"></script>
+<script src="js/engine.js?v=35"></script>
+<script src="js/pitch.js?v=35"></script>
+<script src="js/app.js?v=35"></script>
+</body>
+</html>

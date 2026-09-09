@@ -1,0 +1,167 @@
+{
+  "version": "v0.1",
+  "comment": "阵型预设库（对应 docs/02 §一）。坐标约定：锚点为『平衡』心态下的基准位，x=纵深 0(本方球门线)→1(对方球门线)，y=横向 -1(球队进攻方向左路)→+1(右路)。心态/指令/角色在此基准上做偏移。",
+  "duties": ["de", "su", "at"],
+  "formations": [
+    {
+      "id": "4-4-2",
+      "slots": [
+        { "id": "GK",  "pos": "GK", "x": 0.035, "y": 0.00,  "duty": "de" },
+        { "id": "DL",  "pos": "DL", "x": 0.34,  "y": -0.66, "duty": "de" },
+        { "id": "DCL", "pos": "DC", "x": 0.33,  "y": -0.22, "duty": "de" },
+        { "id": "DCR", "pos": "DC", "x": 0.33,  "y": 0.22,  "duty": "de" },
+        { "id": "DR",  "pos": "DR", "x": 0.34,  "y": 0.66,  "duty": "de" },
+        { "id": "ML",  "pos": "ML", "x": 0.48,  "y": -0.82, "duty": "su" },
+        { "id": "MCL", "pos": "MC", "x": 0.46,  "y": -0.28, "duty": "su" },
+        { "id": "MCR", "pos": "MC", "x": 0.46,  "y": 0.28,  "duty": "su" },
+        { "id": "MR",  "pos": "MR", "x": 0.48,  "y": 0.82,  "duty": "su" },
+        { "id": "STL", "pos": "ST", "x": 0.72,  "y": -0.14, "duty": "at" },
+        { "id": "STR", "pos": "ST", "x": 0.72,  "y": 0.14,  "duty": "at" }
+      ]
+    },
+    {
+      "id": "4-4-1-1",
+      "slots": [
+        { "id": "GK",  "pos": "GK", "x": 0.035, "y": 0.00,  "duty": "de" },
+        { "id": "DL",  "pos": "DL", "x": 0.34,  "y": -0.66, "duty": "de" },
+        { "id": "DCL", "pos": "DC", "x": 0.33,  "y": -0.22, "duty": "de" },
+        { "id": "DCR", "pos": "DC", "x": 0.33,  "y": 0.22,  "duty": "de" },
+        { "id": "DR",  "pos": "DR", "x": 0.34,  "y": 0.66,  "duty": "de" },
+        { "id": "ML",  "pos": "ML", "x": 0.48,  "y": -0.82, "duty": "su" },
+        { "id": "MCL", "pos": "MC", "x": 0.46,  "y": -0.28, "duty": "su" },
+        { "id": "MCR", "pos": "MC", "x": 0.46,  "y": 0.28,  "duty": "su" },
+        { "id": "MR",  "pos": "MR", "x": 0.48,  "y": 0.82,  "duty": "su" },
+        { "id": "AM",  "pos": "AMC", "x": 0.63, "y": 0.00,  "duty": "su" },
+        { "id": "ST",  "pos": "ST", "x": 0.74,  "y": 0.00,  "duty": "at" }
+      ]
+    },
+    {
+      "id": "4-1-4-1",
+      "slots": [
+        { "id": "GK",  "pos": "GK", "x": 0.035, "y": 0.00,  "duty": "de" },
+        { "id": "DL",  "pos": "DL", "x": 0.34,  "y": -0.66, "duty": "de" },
+        { "id": "DCL", "pos": "DC", "x": 0.33,  "y": -0.22, "duty": "de" },
+        { "id": "DCR", "pos": "DC", "x": 0.33,  "y": 0.22,  "duty": "de" },
+        { "id": "DR",  "pos": "DR", "x": 0.34,  "y": 0.66,  "duty": "de" },
+        { "id": "DM",  "pos": "DM", "x": 0.40,  "y": 0.00,  "duty": "de" },
+        { "id": "ML",  "pos": "ML", "x": 0.52,  "y": -0.82, "duty": "su" },
+        { "id": "MCL", "pos": "MC", "x": 0.50,  "y": -0.26, "duty": "su" },
+        { "id": "MCR", "pos": "MC", "x": 0.50,  "y": 0.26,  "duty": "su" },
+        { "id": "MR",  "pos": "MR", "x": 0.52,  "y": 0.82,  "duty": "su" },
+        { "id": "ST",  "pos": "ST", "x": 0.74,  "y": 0.00,  "duty": "at" }
+      ]
+    },
+    {
+      "id": "4-2-3-1",
+      "slots": [
+        { "id": "GK",  "pos": "GK", "x": 0.035, "y": 0.00,  "duty": "de" },
+        { "id": "DL",  "pos": "DL", "x": 0.34,  "y": -0.66, "duty": "de" },
+        { "id": "DCL", "pos": "DC", "x": 0.33,  "y": -0.22, "duty": "de" },
+        { "id": "DCR", "pos": "DC", "x": 0.33,  "y": 0.22,  "duty": "de" },
+        { "id": "DR",  "pos": "DR", "x": 0.34,  "y": 0.66,  "duty": "de" },
+        { "id": "DML", "pos": "DM", "x": 0.40,  "y": -0.18, "duty": "de" },
+        { "id": "DMR", "pos": "DM", "x": 0.40,  "y": 0.18,  "duty": "de" },
+        { "id": "AML", "pos": "AML", "x": 0.62, "y": -0.72, "duty": "su" },
+        { "id": "AMC", "pos": "AMC", "x": 0.64, "y": 0.00,  "duty": "su" },
+        { "id": "AMR", "pos": "AMR", "x": 0.62, "y": 0.72,  "duty": "su" },
+        { "id": "ST",  "pos": "ST", "x": 0.74,  "y": 0.00,  "duty": "at" }
+      ]
+    },
+    {
+      "id": "4-3-3",
+      "slots": [
+        { "id": "GK",  "pos": "GK", "x": 0.035, "y": 0.00,  "duty": "de" },
+        { "id": "DL",  "pos": "DL", "x": 0.34,  "y": -0.66, "duty": "de" },
+        { "id": "DCL", "pos": "DC", "x": 0.33,  "y": -0.22, "duty": "de" },
+        { "id": "DCR", "pos": "DC", "x": 0.33,  "y": 0.22,  "duty": "de" },
+        { "id": "DR",  "pos": "DR", "x": 0.34,  "y": 0.66,  "duty": "de" },
+        { "id": "DM",  "pos": "DM", "x": 0.40,  "y": 0.00,  "duty": "de" },
+        { "id": "MCL", "pos": "MC", "x": 0.48,  "y": -0.30, "duty": "su" },
+        { "id": "MCR", "pos": "MC", "x": 0.48,  "y": 0.30,  "duty": "su" },
+        { "id": "AML", "pos": "AML", "x": 0.64, "y": -0.74, "duty": "at" },
+        { "id": "AMR", "pos": "AMR", "x": 0.64,  "y": 0.74, "duty": "at" },
+        { "id": "ST",  "pos": "ST", "x": 0.74,  "y": 0.00,  "duty": "at" }
+      ]
+    },
+    {
+      "id": "4-2-4",
+      "slots": [
+        { "id": "GK",  "pos": "GK", "x": 0.035, "y": 0.00,  "duty": "de" },
+        { "id": "DL",  "pos": "DL", "x": 0.34,  "y": -0.66, "duty": "de" },
+        { "id": "DCL", "pos": "DC", "x": 0.33,  "y": -0.22, "duty": "de" },
+        { "id": "DCR", "pos": "DC", "x": 0.33,  "y": 0.22,  "duty": "de" },
+        { "id": "DR",  "pos": "DR", "x": 0.34,  "y": 0.66,  "duty": "de" },
+        { "id": "DML", "pos": "DM", "x": 0.40,  "y": -0.16, "duty": "de" },
+        { "id": "DMR", "pos": "DM", "x": 0.40,  "y": 0.16,  "duty": "de" },
+        { "id": "AML", "pos": "AML", "x": 0.68, "y": -0.74, "duty": "at" },
+        { "id": "AMR", "pos": "AMR", "x": 0.68, "y": 0.74,  "duty": "at" },
+        { "id": "STL", "pos": "ST", "x": 0.74,  "y": -0.14, "duty": "at" },
+        { "id": "STR", "pos": "ST", "x": 0.74,  "y": 0.14,  "duty": "at" }
+      ]
+    },
+    {
+      "id": "3-4-3",
+      "slots": [
+        { "id": "GK",  "pos": "GK", "x": 0.035, "y": 0.00,  "duty": "de" },
+        { "id": "DCL", "pos": "DC", "x": 0.33,  "y": -0.24, "duty": "de" },
+        { "id": "DCC", "pos": "DC", "x": 0.31,  "y": 0.00,  "duty": "de" },
+        { "id": "DCR", "pos": "DC", "x": 0.33,  "y": 0.24,  "duty": "de" },
+        { "id": "WBL", "pos": "WBL", "x": 0.42, "y": -0.80, "duty": "su" },
+        { "id": "WBR", "pos": "WBR", "x": 0.42, "y": 0.80,  "duty": "su" },
+        { "id": "MCL", "pos": "MC", "x": 0.48,  "y": -0.22, "duty": "su" },
+        { "id": "MCR", "pos": "MC", "x": 0.48,  "y": 0.22,  "duty": "su" },
+        { "id": "AML", "pos": "AML", "x": 0.66, "y": -0.66, "duty": "at" },
+        { "id": "AMR", "pos": "AMR", "x": 0.66, "y": 0.66,  "duty": "at" },
+        { "id": "ST",  "pos": "ST", "x": 0.74,  "y": 0.00,  "duty": "at" }
+      ]
+    },
+    {
+      "id": "3-4-2-1",
+      "slots": [
+        { "id": "GK",   "pos": "GK", "x": 0.035, "y": 0.00,  "duty": "de" },
+        { "id": "DCL",  "pos": "DC", "x": 0.33,  "y": -0.24, "duty": "de" },
+        { "id": "DCC",  "pos": "DC", "x": 0.31,  "y": 0.00,  "duty": "de" },
+        { "id": "DCR",  "pos": "DC", "x": 0.33,  "y": 0.24,  "duty": "de" },
+        { "id": "WBL",  "pos": "WBL", "x": 0.42, "y": -0.80, "duty": "su" },
+        { "id": "WBR",  "pos": "WBR", "x": 0.42, "y": 0.80,  "duty": "su" },
+        { "id": "MCL",  "pos": "MC", "x": 0.48,  "y": -0.22, "duty": "su" },
+        { "id": "MCR",  "pos": "MC", "x": 0.48,  "y": 0.22,  "duty": "su" },
+        { "id": "AMCL", "pos": "AMC", "x": 0.63, "y": -0.22, "duty": "su" },
+        { "id": "AMCR", "pos": "AMC", "x": 0.63, "y": 0.22,  "duty": "su" },
+        { "id": "ST",   "pos": "ST", "x": 0.74,  "y": 0.00,  "duty": "at" }
+      ]
+    },
+    {
+      "id": "3-5-2",
+      "slots": [
+        { "id": "GK",  "pos": "GK", "x": 0.035, "y": 0.00,  "duty": "de" },
+        { "id": "DCL", "pos": "DC", "x": 0.33,  "y": -0.24, "duty": "de" },
+        { "id": "DCC", "pos": "DC", "x": 0.31,  "y": 0.00,  "duty": "de" },
+        { "id": "DCR", "pos": "DC", "x": 0.33,  "y": 0.24,  "duty": "de" },
+        { "id": "WBL", "pos": "WBL", "x": 0.44, "y": -0.82, "duty": "su" },
+        { "id": "WBR", "pos": "WBR", "x": 0.44, "y": 0.82,  "duty": "su" },
+        { "id": "DM",  "pos": "DM", "x": 0.40,  "y": 0.00,  "duty": "de" },
+        { "id": "MCL", "pos": "MC", "x": 0.48,  "y": -0.26, "duty": "su" },
+        { "id": "MCR", "pos": "MC", "x": 0.48,  "y": 0.26,  "duty": "su" },
+        { "id": "STL", "pos": "ST", "x": 0.72,  "y": -0.14, "duty": "at" },
+        { "id": "STR", "pos": "ST", "x": 0.72,  "y": 0.14,  "duty": "su" }
+      ]
+    },
+    {
+      "id": "5-3-2",
+      "slots": [
+        { "id": "GK",  "pos": "GK", "x": 0.035, "y": 0.00,  "duty": "de" },
+        { "id": "WBL", "pos": "WBL", "x": 0.36, "y": -0.78, "duty": "de" },
+        { "id": "DCL", "pos": "DC", "x": 0.33,  "y": -0.26, "duty": "de" },
+        { "id": "DCC", "pos": "DC", "x": 0.31,  "y": 0.00,  "duty": "de" },
+        { "id": "DCR", "pos": "DC", "x": 0.33,  "y": 0.26,  "duty": "de" },
+        { "id": "WBR", "pos": "WBR", "x": 0.36, "y": 0.78,  "duty": "de" },
+        { "id": "MCL", "pos": "MC", "x": 0.48,  "y": -0.26, "duty": "su" },
+        { "id": "MCC", "pos": "MC", "x": 0.46,  "y": 0.00,  "duty": "su" },
+        { "id": "MCR", "pos": "MC", "x": 0.48,  "y": 0.26,  "duty": "su" },
+        { "id": "STL", "pos": "ST", "x": 0.72,  "y": -0.14, "duty": "at" },
+        { "id": "STR", "pos": "ST", "x": 0.72,  "y": 0.14,  "duty": "su" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "version": "v0.1",
+  "comment": "攻防指令目录（对应 docs/02 §三/§四，逐条同档位）。每条的 compile 字段为战术编译器的翻译目标；机器字段名遵循 schemas/simparams.schema.json。",
+  "instructions": [
+    { "id": "width", "zh": "进攻宽度", "group": "in", "options": [
+      { "id": "narrow", "zh": "窄", "compile": "边路球员锚点横向偏移 -3m（相对标准档）" },
+      { "id": "standard", "zh": "标准", "compile": "边路锚点取阵型基准 y" },
+      { "id": "wide", "zh": "宽", "compile": "边路球员锚点横向偏移 +3m" } ] },
+    { "id": "buildup", "zh": "出球方式", "group": "in", "options": [
+      { "id": "short", "zh": "后场短传", "compile": "buildup.short_pass_bias=0.8：短传成功率阈值提高，宁可回传不冒险" },
+      { "id": "mixed", "zh": "混合", "compile": "buildup.short_pass_bias=0.5" },
+      { "id": "direct", "zh": "直接", "compile": "buildup.long_ball_weight=1.8，门将+中后场优先长传找支点" } ] },
+    { "id": "tempo", "zh": "传球节奏", "group": "in", "options": [
+      { "id": "slow", "zh": "慢", "compile": "tempo.decision_window_s ×1.2" },
+      { "id": "standard", "zh": "标准", "compile": "tempo.decision_window_s 不修正" },
+      { "id": "fast", "zh": "快", "compile": "tempo.decision_window_s ×0.8（更早出球），执行误差系数 ×1.1" } ] },
+    { "id": "crossing", "zh": "传中倾向", "group": "in", "options": [
+      { "id": "early", "zh": "早传", "compile": "下底深度阈值提前，包抄人数阈值 -1" },
+      { "id": "mixed", "zh": "混合", "compile": "传中触发取默认条件" },
+      { "id": "low", "zh": "低平", "compile": "传中类型分布偏向低平球（贴地/倒三角）" },
+      { "id": "less", "zh": "少传中", "compile": "传中动作权重 ×0.5，倾向内切/回做" } ] },
+    { "id": "final_third_play", "zh": "进攻三区打法", "group": "in", "options": [
+      { "id": "penetrate", "zh": "渗透", "compile": "禁区前沿直塞/小配合权重 ×1.4" },
+      { "id": "mixed", "zh": "混合", "compile": "禁区前沿动作集取默认权重" },
+      { "id": "long_shots", "zh": "远射", "compile": "禁区前沿远射权重 ×1.5" },
+      { "id": "overlaps", "zh": "套边传中", "compile": "套边/叠瓦触发权重 ×1.4，传中权重 ×1.3" } ] },
+    { "id": "short_pass_chains", "zh": "短传渗透倾向", "group": "in", "options": [
+      { "id": "off", "zh": "关", "compile": "不放宽连续短传容忍度" },
+      { "id": "on", "zh": "开", "compile": "允许慢速倒脚（连续短传链容忍度 +1），快节奏触发线后移" } ] },
+    { "id": "time_wasting", "zh": "时间拖延", "group": "in", "options": [
+      { "id": "off", "zh": "关", "compile": "不叠加" },
+      { "id": "on", "zh": "开（领先时自动叠加）", "compile": "领先 + 70' 后自动生效：tempo.decision_window_s ×1.25，tempo.forward_risk_weight ×0.7" } ] },
+
+    { "id": "def_line", "zh": "防线高度", "group": "out", "options": [
+      { "id": "very_low", "zh": "很低", "compile": "def_line_base_m = 心态基准 -8m，与越位线联动" },
+      { "id": "low", "zh": "低", "compile": "def_line_base_m = 心态基准 -4m" },
+      { "id": "standard", "zh": "标准", "compile": "def_line_base_m = 心态基准" },
+      { "id": "high", "zh": "高", "compile": "def_line_base_m = 心态基准 +4m" },
+      { "id": "very_high", "zh": "很高", "compile": "def_line_base_m = 心态基准 +8m" } ] },
+    { "id": "def_width", "zh": "防线宽度", "group": "out", "options": [
+      { "id": "narrow", "zh": "窄", "compile": "后卫线横向间距 -2m" },
+      { "id": "standard", "zh": "标准", "compile": "后卫线横向间距取基准" },
+      { "id": "wide", "zh": "宽", "compile": "后卫线横向间距 +2m" } ] },
+    { "id": "press_intensity", "zh": "逼抢强度", "group": "out", "options": [
+      { "id": "very_low", "zh": "很低", "compile": "press.trigger_dist_m=22，press.count=1" },
+      { "id": "low", "zh": "低", "compile": "press.trigger_dist_m=18.5，press.count=1" },
+      { "id": "standard", "zh": "标准", "compile": "press.trigger_dist_m=15，press.count=2" },
+      { "id": "high", "zh": "高", "compile": "press.trigger_dist_m=11.5，press.count=2" },
+      { "id": "very_high", "zh": "很高", "compile": "press.trigger_dist_m=8，press.count=3" } ] },
+    { "id": "press_trigger", "zh": "逼抢触发线", "group": "out", "options": [
+      { "id": "low_field", "zh": "后场", "compile": "仅本方 1/3 优先围抢" },
+      { "id": "midfield", "zh": "中场", "compile": "中线附近优先围抢" },
+      { "id": "high_field", "zh": "前场", "compile": "对方半场即发起围抢" } ] },
+    { "id": "tackling", "zh": "抢断强度", "group": "out", "options": [
+      { "id": "softer", "zh": "温柔", "compile": "犯规概率 ×0.6，抢断成功率 -10%" },
+      { "id": "normal", "zh": "正常", "compile": "犯规概率 ×1.0，抢断成功率 ±0" },
+      { "id": "hard", "zh": "凶狠", "compile": "犯规概率 ×1.8，抢断成功率 +10%" } ] },
+    { "id": "offside_trap", "zh": "越位战术", "group": "out", "options": [
+      { "id": "off", "zh": "关", "compile": "offside_trap=false" },
+      { "id": "on", "zh": "开", "compile": "offside_trap=true：后卫线协同上提造越位，风险=被打身后" } ] },
+    { "id": "counter_press", "zh": "反抢", "group": "out", "options": [
+      { "id": "off", "zh": "关", "compile": "counter_press.enabled=false" },
+      { "id": "on", "zh": "开", "compile": "counter_press.enabled=true：丢球后 5s 内，丢球点半径 counter_press.radius_m=12 内 counter_press.count=2-3 人立即反抢" } ] },
+    { "id": "counter", "zh": "快速反击", "group": "out", "options": [
+      { "id": "off", "zh": "关", "compile": "counter.enabled=false" },
+      { "id": "on", "zh": "开", "compile": "counter.enabled=true：断球后 counter.window_s=6 内向前直塞与冲刺权重 ×2" } ] },
+    { "id": "gk_distribution", "zh": "门将发球", "group": "out", "options": [
+      { "id": "short", "zh": "短传", "compile": "buildup.gk_distribution=short：优先短传后卫" },
+      { "id": "mixed", "zh": "混合", "compile": "buildup.gk_distribution=mixed" },
+      { "id": "long", "zh": "长传", "compile": "buildup.gk_distribution=long：目标点=中锋争顶或两翼" } ] },
+    { "id": "press_gk", "zh": "逼抢门将", "group": "out", "options": [
+      { "id": "off", "zh": "关", "compile": "前锋对门将持球保持默认距离" },
+      { "id": "on", "zh": "开", "compile": "前锋对门将持球施压距离缩短至 8m" } ] }
+  ]
+}
