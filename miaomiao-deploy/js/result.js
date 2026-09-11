@@ -123,6 +123,7 @@ const Result = (() => {
     let bestTxt = '最佳纪录 · 坚持 ' + U.fmtTime(d.best.time) + ' · 最远第 ' + (d.best.rounds || 1) + ' 轮';
     if (d.bestMother) bestTxt += ' · 老鼠妈妈最速 ' + U.fmtTime(d.bestMother);
     $('best-line2').textContent = bestTxt;
+    $('lb-rank-line').hidden = true; // 排行榜提交成功后由 showLbRank 填入（ leaderboard.js 异步回来）
   }
 
   /* ================= 战报分享图 ================= */
@@ -330,5 +331,14 @@ const Result = (() => {
     }, 'image/png');
   }
 
-  return { open, saveImage, renderCard };
+  /* 云端排行榜提交回执（lb 提交是异步的：面板先出，名次回来再点亮这一行。
+     小游戏版不执行本函数——那边的名次走 MUI.setLbLine，见 tools_transform.py 的改写） */
+  function showLbRank(rank) {
+    const el = $('lb-rank-line');
+    if (!el || !rank) return;
+    el.textContent = '🏆 恭喜上榜：云端第 ' + rank + ' 名！';
+    el.hidden = false;
+  }
+
+  return { open, saveImage, renderCard, showLbRank };
 })();

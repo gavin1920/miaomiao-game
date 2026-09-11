@@ -121,6 +121,27 @@
   .log-tag.opt{background:var(--cyan-d);color:#fff}
   .log-tag.bal{background:#f0b13c;color:#5c3a08}
   .log-tag.fix{background:var(--pink);color:#fff}
+  /* ---------- 🏆 云端排行榜（结构同更新日志面板：面板固定高 + 列表内部滚动） ---------- */
+  body.lb-open{touch-action:pan-y}
+  #screen-lb{touch-action:pan-y}
+  #lb-panel{width:min(92vw,560px);height:70vh;display:flex;flex-direction:column;overflow:hidden}
+  #lb-panel>.btnrow{flex:none}
+  #lb-toolbar{display:flex;gap:8px;align-items:center;margin-top:10px;flex:none}
+  #lb-name{flex:1;min-width:0;font-family:inherit;font-size:16px;color:#453244;background:#fff;
+    border:2px solid #453244;border-radius:12px;padding:8px 12px;outline:none;user-select:text;-webkit-user-select:text}
+  #lb-name:focus{border-color:#e05656}
+  #lb-list{flex:1 1 auto;min-height:60px;overflow-y:auto;text-align:left;margin-top:10px;padding-right:4px;
+    overscroll-behavior:contain;touch-action:pan-y;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  #lb-list::-webkit-scrollbar{display:none}
+  .lb-row{display:flex;align-items:center;gap:8px;background:linear-gradient(180deg,#fffdf6,#fff6e0);
+    border:2px solid #453244;border-radius:14px;padding:8px 12px;margin-bottom:8px;
+    box-shadow:3px 4px 0 rgba(69,50,68,.18)}
+  .lb-row.top3{border-color:#e05656;box-shadow:0 0 10px rgba(240,177,60,.45),3px 4px 0 rgba(69,50,68,.18)}
+  .lb-rank{flex:none;min-width:40px;text-align:center;font-weight:900;font-size:15px;color:#e05656}
+  .lb-nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#453244;font-weight:700}
+  .lb-sc{flex:none;color:#96806f;font-size:13.5px;white-space:nowrap}
+  .lb-state{color:#96806f;padding:34px 10px;text-align:center;line-height:2;font-size:15px}
+  #lb-me{flex:none;margin-top:8px;font-size:14px;color:#96806f;text-shadow:none}
   /* ---------- 升级 3 选 1 ---------- */
   #screen-levelup{gap:20px}
   #lvl-title{color:#fff;font-size:clamp(26px,5vw,40px);letter-spacing:6px;
@@ -380,7 +401,7 @@
 <canvas id="game"></canvas>
 
 <!-- ⚙ 平衡设置入口：对局进行中由 main.js 挂 hidden 隐藏（意见5），仅主菜单/结算等非对局界面可见；
-     🔊 音效 / 🔍 缩放 / ⏩ 加速在暂停面板（与「继续夜巡」同级的两行三钮）切换 -->
+     🔊 音效在暂停面板切换；意见9：缩放/加速不再提供界面按钮（快捷键 -/= · 1/2/3 仍可用） -->
 <button id="btn-cfg" title="平衡设置（game_config.js）">⚙</button>
 
 <!-- 主菜单 -->
@@ -397,15 +418,16 @@
     <div class="btnrow">
       <button class="btn" id="btn-start">开始夜巡 !</button>
       <button class="btn secondary" id="btn-help">玩法说明</button>
+      <button class="btn secondary" id="btn-lb">🏆 排行榜</button>
       <button class="btn secondary" id="btn-log">📜 更新日志</button>
     </div>
-    <div id="menu-hint">WASD / 方向键 移动 · 武器全自动 · P 暂停 · M 静音 · 暂停面板可切 音效/缩放/加速（-/= · 1/2/3）</div>
+    <div id="menu-hint">WASD / 方向键 移动 · 武器全自动 · P 暂停 · M 静音（-/= 缩放 · 1/2/3 加速）</div>
   </div>
 </div>
 <div id="help-panel" class="panel ears hidden">
   <div style="font-size:26px;letter-spacing:3px">🐱 玩法说明</div>
   <div class="help-list">
-    · <b>目标</b>：每轮 15 分钟、<b>4 个批次</b>，打倒每批<b>头目</b>推进；每轮末尾讨伐<b>鼠王·铁须</b>进入下一轮；<b>第 3 轮</b>压轴 Boss<b>「老鼠妈妈」</b>被讨伐就通关～之后还能继续<b>无尽夜巡</b>！<br>
+    · <b>目标</b>：每轮 15 分钟、<b>4 个批次</b>，打倒每批<b>头目</b>推进；<b>第 3 轮</b>末讨伐<b>鼠王·铁须</b>后，压轴 Boss<b>「老鼠妈妈」</b>强制降临——讨伐她即<b>通关收官</b>！构筑够硬的话，去地图边缘捣毁<b>老鼠妈妈的老巢</b>，可以提前引她现身，比比谁最快通关～<br>
     · <b>操作</b>：<span class="key">W A S D</span><span class="key">↑↓←→</span>或手机摇杆移动，武器<b>全自动</b>，专心走位就好！<br>
     · <b>成长</b>：捡<b>小鱼干</b>升级，每次 <b>3 选 1</b> 强化；除猫爪外最多再带 <b>4 种武器</b>。<br>
     · <b>地形</b>：楼房水面走不了，🐾<b>猫道</b>只有你能钻——善用地形遛鼠群！<br>
@@ -444,12 +466,9 @@
     <div class="btnrow" style="flex-direction:column;margin-top:18px">
       <button class="btn" id="btn-resume">继续夜巡</button>
       <button class="btn secondary" id="btn-restart">重新开始</button>
-      <!-- 🔊 音效 / 🔍 缩放 / ⏩ 加速：与「继续夜巡」同级的三钮一行（从平衡设置抽屉移出）；
-           接线在 main.js / config_panel.js，按钮 id 不变（#cfg-*-btn） -->
+      <!-- 意见9：🔍缩放 / ⏩加速 两钮已按正式版 UI 移除（保留快捷键 -/= 与 1/2/3），只留 🔊 音效钮 -->
       <div class="btnrow">
         <button class="btn small secondary" id="cfg-mute-btn" title="音效开关：单击切换（快捷键 M）">🔊 音效:开</button>
-        <button class="btn small secondary" id="cfg-zoom-btn" title="画面缩放：单击循环 1X → 2X → 4X（快捷键 - / =）">🔍 1X</button>
-        <button class="btn small secondary" id="cfg-speed-btn" title="游戏加速：单击循环 1X → 2X → 3X（快捷键 1 / 2 / 3）">⏩ 1X</button>
       </div>
       <button class="btn secondary" id="btn-cfg-pause">⚙ 平衡设置</button>
       <button class="btn secondary" id="btn-quit">回主菜单</button>
@@ -481,6 +500,7 @@
       <div class="brow" id="brow-s" hidden><span class="blab">猫爪印</span><div class="bchips" id="bchips-s"></div></div>
     </div>
     <div class="best-line" id="best-line2" style="color:#96806f;text-shadow:none"></div>
+    <div class="best-line" id="lb-rank-line" hidden style="color:#c47b1e;text-shadow:none;font-weight:900"></div>
     <div class="btnrow" style="margin-top:14px">
       <button class="btn" id="btn-continue" hidden>🌙 继续夜巡</button>
       <button class="btn" id="btn-again">再来一局！</button>
@@ -496,6 +516,22 @@
     <div style="font-size:26px;letter-spacing:3px">📜 更新日志</div>
     <div id="log-list"></div>
     <div class="btnrow" style="margin-top:4px"><button class="btn small" id="btn-log-close">知道啦！</button></div>
+  </div>
+</div>
+
+<!-- 🏆 云端排行榜（双端互通：微信小游戏 / 网页同一张榜；数据走云开发，服务模块在 js/leaderboard.js，
+     面板逻辑在 js/lb_ui.js；云未配置时自动降级为本地最佳纪录展示） -->
+<div id="screen-lb" class="overlay dim hidden">
+  <div id="lb-panel" class="panel ears">
+    <div style="font-size:26px;letter-spacing:3px">🏆 云端排行榜</div>
+    <div id="lb-toolbar">
+      <input id="lb-name" maxlength="12" placeholder="你的猫名" spellcheck="false" autocomplete="off">
+      <button class="btn small secondary" id="btn-lb-dice" title="随机换一个猫名">🎲</button>
+      <button class="btn small secondary" id="btn-lb-refresh" title="刷新榜单">🔄</button>
+    </div>
+    <div id="lb-list"></div>
+    <div id="lb-me"></div>
+    <div class="btnrow" style="margin-top:4px"><button class="btn small" id="btn-lb-close">知道啦！</button></div>
   </div>
 </div>
 
@@ -526,17 +562,21 @@
 
 <div class="credit">原创程序美术 &amp; 合成音乐 · 猫叫采样授权见 assets/meow/CREDITS.md · 灵感致敬 Vampire Survivors</div>
 
-<script src="js/util.js?v=20260909d"></script>
-<script src="js/audio.js?v=20260909d"></script>
-<script src="js/art.js?v=20260909d"></script>
-<script src="pixel-assets/manifest.js?v=20260909d"></script>
-<script src="js/art_pixel.js?v=20260909d"></script>
-<script src="js/maps.js?v=20260909d"></script>
-<script src="js/game_config.js?v=20260909d"></script>
-<script src="js/data.js?v=20260909d"></script>
-<script src="js/config_panel.js?v=20260909d"></script>
-<script src="js/result.js?v=20260909d"></script>
-<script src="js/changelog.js?v=20260909d"></script>
+<script src="js/util.js?v=20260912a"></script>
+<script src="js/audio.js?v=20260912a"></script>
+<script src="js/art.js?v=20260912a"></script>
+<script src="pixel-assets/manifest.js?v=20260912a"></script>
+<script src="js/art_pixel.js?v=20260912a"></script>
+<script src="js/maps.js?v=20260912a"></script>
+<script src="js/game_config.js?v=20260912a"></script>
+<script src="js/data.js?v=20260912a"></script>
+<script src="js/config_panel.js?v=20260912a"></script>
+<script src="js/result.js?v=20260912a"></script>
+<script src="js/changelog.js?v=20260912a"></script>
+<!-- 🏆 云端排行榜：微信官方 Web SDK（未登录模式，网页端调云函数的唯一通道，见 js/leaderboard.js）。
+     加载失败（离线/被墙）时 cloudbase 全局缺席，LB 自动进入降级态，游戏一切照旧 -->
+<script src="https://web-9gikcbug35bad3a8-1304825656.tcloudbaseapp.com/sdk/1.4.0/cloud.js"></script>
+<script src="js/leaderboard.js?v=20260912a"></script>
 <!-- 截图/自动化辅助（仅带 ?shot= 参数时生效）：help=玩法说明 log=更新日志 menu=干净主菜单。
      先把 ?shot= 归一成 ?auto=shot（复用 changelog_ui「自动化不打扰」抑制，防止新版本日志自动弹出干扰），
      再等 main.js 就位后复用既有按钮 click 打开面板；不改任何游戏逻辑，与 ?dev=1&auto=... 钩子同族 -->
@@ -576,15 +616,16 @@
         else draw();
         return;
       }
-      var b = { help: 'btn-help', log: 'btn-log', cfg: 'btn-cfg' }[s];
+      var b = { help: 'btn-help', log: 'btn-log', lb: 'btn-lb', cfg: 'btn-cfg' }[s];
       var el = b && document.getElementById(b);
       if (el) el.click();
     }, 500);
   });
 })();
 </script>
-<script src="js/changelog_ui.js?v=20260909d"></script>
+<script src="js/changelog_ui.js?v=20260912a"></script>
+<script src="js/lb_ui.js?v=20260912a"></script>
 <script>window.__PIXEL_GATE = new Promise(function(r){ window.addEventListener('pixel-assets-ready', r, { once: true }); });</script>
-<script src="js/main.js?v=20260909d"></script>
+<script src="js/main.js?v=20260912a"></script>
 </body>
 </html>

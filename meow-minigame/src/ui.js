@@ -15,7 +15,7 @@ const MUI = (() => {
   let cards = [], onPick = null;      // 三选一
   let chestRows = [], onChestOk = null; // 宝箱
   let result = null;                  // 结算数据（fork 已整理成展示结构）
-  const scroll = { help: 0, log: 0, over: 0 };
+  const scroll = { help: 0, log: 0, over: 0, lb: 0 };
   const drag = { on: false, y: 0, base: 0, moved: 0 };
   let hits = []; // 本帧命中区 [{x,y,w,h,fn}]
   let mapPvs = null; // 地图缩略图懒烘焙 [canvas]
@@ -161,16 +161,16 @@ const MUI = (() => {
       hits.push({ x: cx, y: cy, w: pw, h: ph + 20, fn: () => cb.selectMap(m.id) });
     }
     // 按钮行
-    const bw = Math.min(150, vw * 0.16), bh = Math.max(38, vh * 0.095);
+    const bw = Math.min(128, vw * 0.135), bh = Math.max(38, vh * 0.095);
     const by = vh - bh - Math.max(16, vh * 0.05);
-    const totalW = bw * 3 + 24;
-    const bx0 = Math.max(vw * 0.02, vw / 2 - bw * 1.2);
+    const bx0 = Math.max(vw * 0.02, vw / 2 - (bw * 4 + 12 * 3) / 2);
     btn(x, cb.startRun, bx0, by, bw, bh, '开始夜巡 !', 'primary');
     btn(x, cb.showHelp, bx0 + bw + 12, by, bw, bh, '玩法说明', 'secondary');
-    btn(x, cb.showLog, bx0 + (bw + 12) * 2, by, bw, bh, '📜更新日志', 'secondary');
+    btn(x, cb.showLb, bx0 + (bw + 12) * 2, by, bw, bh, '🏆排行榜', 'secondary');
+    btn(x, cb.showLog, bx0 + (bw + 12) * 3, by, bw, bh, '📜更新日志', 'secondary');
     if (cb.hasNewLog()) {
       x.save();
-      x.translate(bx0 + (bw + 12) * 2 + bw - 14, by - 6);
+      x.translate(bx0 + (bw + 12) * 3 + bw - 14, by - 6);
       x.rotate(Math.sin(now * 4) * 0.12);
       x.font = '900 12px ' + FONT;
       x.textAlign = 'center'; x.textBaseline = 'middle';
@@ -185,7 +185,7 @@ const MUI = (() => {
     x.font = '400 ' + Math.round(vh * 0.033) + 'px ' + FONT;
     x.textAlign = 'center'; x.textBaseline = 'middle';
     x.fillStyle = 'rgba(207,208,255,.6)';
-    x.fillText('拖动屏幕移动 · 武器全自动 · 界面右上角可暂停/缩放/加速', vw / 2, vh - 12);
+    x.fillText('拖动屏幕移动 · 武器全自动 · 右上角齿轮可暂停/静音', vw / 2, vh - 12);
     x.restore();
   }
 
@@ -311,6 +311,97 @@ const MUI = (() => {
     drag.area = { x: px + 24, y: lp, w: w - 48, h: lhh, key: 'log', contentH };
   }
 
+  /* ================= 🏆 云端排行榜（数据由 LB 维护，主程序经回调注入；未配置云时自动降级） ================= */
+  function drawLb(x) {
+    const s = cb.lbSnapshot ? cb.lbSnapshot() : null;
+    const snap = (s && s.snap) || { state: 'off', rows: [] };
+    const me = s && s.me;
+    const w = Math.min(vw * 0.88, 640), h = vh * 0.9;
+    const px = (vw - w) / 2, py = (vh - h) / 2;
+    panel(x, px, py, w, h);
+    x.save();
+    x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.font = '700 ' + Math.round(vh * 0.065) + 'px ' + FONT;
+    x.fillStyle = '#5b4a44';
+    x.fillText('🏆 云端排行榜', vw / 2, py + vh * 0.065);
+    x.restore();
+    // 猫名行：当前名字 + 🎲换名 / 🔄刷新（小游戏无输入法面板，换名=随机生成，网页端可自由输入）
+    const btnH = Math.max(28, vh * 0.078);
+    const rowY = py + vh * 0.115;
+    x.save();
+    x.textAlign = 'left'; x.textBaseline = 'middle';
+    x.font = '400 ' + Math.round(vh * 0.036) + 'px ' + FONT;
+    x.fillStyle = '#6d5a52';
+    x.fillText('🐾 ' + (me ? me.name : ''), px + 28, rowY + btnH / 2, w - 200);
+    x.restore();
+    btn(x, cb.lbRename, px + w - 178, rowY, 84, btnH, '🎲换名', 'secondary');
+    btn(x, cb.lbRefresh, px + w - 88, rowY, 60, btnH, '🔄', 'secondary');
+    // 榜单列表（超出面板高度时整列滚动，与更新日志同款）
+    const fs = Math.max(11, Math.round(vh * 0.034));
+    const listTop = rowY + btnH + 12;
+    const listH = h - (listTop - py) - vh * 0.15;
+    const rowH = Math.max(30, vh * 0.08);
+    const contentH = snap.state === 'ok' ? Math.max(1, snap.rows.length * (rowH + 6)) : 1;
+    const a = scrollArea(x, 'lb', px + 24, listTop, w - 48, listH, contentH);
+    x.save();
+    x.textAlign = 'left'; x.textBaseline = 'middle';
+    if (snap.state === 'off') {
+      x.fillStyle = '#96806f'; x.textAlign = 'center';
+      x.fillText('☁️ 云端排行榜暂未开启～', vw / 2, listTop + listH * 0.35, w - 60);
+      x.fillText('你的最佳纪录会存在本机，开通后自动上云互通。', vw / 2, listTop + listH * 0.35 + fs * 1.9, w - 60);
+    } else if (snap.state === 'loading') {
+      x.fillStyle = '#96806f'; x.textAlign = 'center';
+      x.fillText('☁️ 正在爬上屋顶看榜…', vw / 2, listTop + listH * 0.35);
+    } else if (snap.state === 'fail') {
+      x.fillStyle = '#96806f'; x.textAlign = 'center';
+      x.fillText('云端开小差了，点 🔄 再试试～', vw / 2, listTop + listH * 0.35);
+    } else if (!snap.rows.length) {
+      x.fillStyle = '#96806f'; x.textAlign = 'center';
+      x.fillText('虚位以待，等一只勇敢的猫 🐾', vw / 2, listTop + listH * 0.35);
+    } else {
+      const medals = ['🥇', '🥈', '🥉'];
+      const yy = listTop + 4 - scroll.lb;
+      snap.rows.forEach((e, i) => {
+        const ry = yy + i * (rowH + 6);
+        if (ry + rowH < listTop - 24 || ry > listTop + a.clipH + 12) return; // 视口外不画
+        const top3 = i < 3;
+        rr(x, px + 26, ry, w - 52, rowH, 10);
+        x.fillStyle = '#fff'; x.fill();
+        x.lineWidth = 2.5; x.strokeStyle = top3 ? '#e05656' : '#ffe1b0'; x.stroke();
+        x.textAlign = 'center';
+        x.font = '700 ' + Math.round(rowH * 0.42) + 'px ' + FONT;
+        x.fillStyle = '#e05656';
+        x.fillText(top3 ? medals[i] : '#' + (i + 1), px + 54, ry + rowH / 2);
+        x.textAlign = 'left';
+        x.font = '400 ' + Math.round(rowH * 0.4) + 'px ' + FONT;
+        x.fillStyle = '#453244';
+        const nm = ((cb.lbMapTag && cb.lbMapTag(e.map)) || '') + ' ' + (e.name || '无名猫猫');
+        x.fillText(nm, px + 82, ry + rowH / 2, w - 260);
+        x.textAlign = 'right';
+        x.font = '400 ' + Math.round(rowH * 0.34) + 'px ' + FONT;
+        x.fillStyle = '#96806f';
+        const sc = '第' + (e.round || 1) + '轮 ' + U.fmtTime(e.time || 0) +
+          (e.mother ? ' 👑' : e.win ? ' 🏁' : '') + (e.sp > 1 ? ' ⏩' + e.sp + 'X' : '');
+        x.fillText(sc, px + w - 42, ry + rowH / 2);
+      });
+    }
+    x.restore(); // 文本状态层
+    x.restore(); // scrollArea 裁剪层（少一次会把按钮全部裁掉）
+    // 我的最佳（始终显示，云端名次若有则追加）
+    if (me) {
+      x.save();
+      x.textAlign = 'center'; x.textBaseline = 'middle';
+      x.font = '400 ' + Math.round(vh * 0.032) + 'px ' + FONT;
+      x.fillStyle = '#96806f';
+      const t = me.round ? '🐾 我 · 最佳：第 ' + me.round + ' 轮 · ' + U.fmtTime(me.time || 0) + (me.rank ? ' · 🏆榜上第' + me.rank + '名' : '')
+        : '🐾 我（' + me.name + '）· 还没有出战记录';
+      x.fillText(t, vw / 2, py + h - vh * 0.12, w - 40);
+      x.restore();
+    }
+    btn(x, cb.closeOverlay, vw / 2 - 60, py + h - vh * 0.105, 120, Math.max(30, vh * 0.08), '知道啦！', 'primary');
+    drag.area = { x: px + 24, y: listTop, w: w - 48, h: listH, key: 'lb', contentH };
+  }
+
   /* ================= 升级三选一 ================= */
   function drawLevelup(x) {
     x.save();
@@ -426,7 +517,7 @@ const MUI = (() => {
     btn(x, onChestOk, vw / 2 - 70, py + h - Math.max(34, vh * 0.09) - 8, 140, Math.max(32, vh * 0.08), '开心收下！', 'primary');
   }
 
-  /* ================= 暂停 ================= */
+  /* ================= 暂停（⚙ 齿轮打开；意见9：只留音效开关） ================= */
   function drawPause(x) {
     x.save();
     x.fillStyle = 'rgba(12,10,34,.66)';
@@ -441,12 +532,18 @@ const MUI = (() => {
     x.fillStyle = '#8a6fb8';
     x.fillText('💤 休息一下', vw / 2, py + h * 0.16);
     x.restore();
-    const bw = w * 0.68, bh = Math.max(32, vh * 0.09), gap = Math.max(8, vh * 0.024);
+    const bh = Math.max(32, vh * 0.09), gap = Math.max(8, vh * 0.024);
+    const rowW = w * 0.68, rowX = vw / 2 - rowW / 2;
     let by = py + h * 0.3;
-    btn(x, cb.resume, vw / 2 - bw / 2, by, bw, bh, '继续夜巡', 'primary'); by += bh + gap;
-    btn(x, cb.restart, vw / 2 - bw / 2, by, bw, bh, '重新开始', 'secondary'); by += bh + gap;
-    btn(x, cb.quitToMenu, vw / 2 - bw / 2, by, bw, bh, '回主菜单', 'secondary'); by += bh + gap;
-    btn(x, cb.toggleMute, vw / 2 - bw / 2, by, bw, bh, cb.muted() ? '音效：关' : '音效：开', 'secondary');
+    /* Row 1: 继续夜巡（全宽 primary） */
+    btn(x, cb.resume, rowX, by, rowW, bh, '继续夜巡', 'primary'); by += bh + gap;
+    /* Row 2: 重新开始 | 回主菜单 */
+    const bw2 = (rowW - gap) / 2;
+    btn(x, cb.restart, rowX, by, bw2, bh, '重新开始', 'secondary');
+    btn(x, cb.quitToMenu, rowX + bw2 + gap, by, bw2, bh, '回主菜单', 'secondary'); by += bh + gap;
+    /* Row 3: 🔊音效（意见9：缩放/加速钮已按正式网页版 UI 移除，点后不关面板） */
+    btn(x, cb.toggleMute, rowX, by, rowW, bh, cb.muted() ? '🔇 静音中' : '🔊 音效', 'secondary');
+    btn(x, cb.toggleMute, rowX + (bw3 + gap) * 2, by, bw3, bh, cb.muted() ? '🔇' : '🔊', 'secondary');
   }
 
   /* ================= 结算 ================= */
@@ -528,6 +625,12 @@ const MUI = (() => {
     x.font = '400 ' + fs + 'px ' + FONT;
     x.fillStyle = '#96806f';
     x.fillText(d.bestTxt, cxx, yy + 18, w - 60);
+    // 云端排行榜回执（提交异步返回后由 MUI.setLbLine 点亮）
+    if (d.lbLine) {
+      x.font = '700 ' + Math.round(fs * 1.05) + 'px ' + FONT;
+      x.fillStyle = '#c47b1e';
+      x.fillText(d.lbLine, cxx, yy + 18 + fs * 1.8, w - 60);
+    }
     x.restore(); // 标题/文案层
     x.restore(); // scrollArea 的裁剪层（少一次会把按钮全部裁掉）
     // 按钮行（面板底部固定，不随滚动）
@@ -541,42 +644,44 @@ const MUI = (() => {
     drag.area = { x: px + 14, y: lp, w: w - 28, h: lhh, key: 'over', contentH };
   }
 
-  /* ================= HUD 角落按钮（游戏中） ================= */
+  /* ================= HUD：右上角像素齿轮⚙（点开暂停面板） ================= */
+  function drawGear(x, cx, cy, r) {
+    x.save();
+    /* 底盘圆 */
+    x.globalAlpha = 0.88;
+    x.fillStyle = 'rgba(30,26,58,.82)';
+    x.beginPath(); x.arc(cx, cy, r, 0, TAU); x.fill();
+    x.lineWidth = 2; x.strokeStyle = 'rgba(255,233,196,.65)'; x.stroke();
+    x.globalAlpha = 1;
+    /* 像素齿轮（8 齿方头 + 圆环 + 中孔） */
+    const gr = r * 0.52;
+    x.fillStyle = '#ffd34d';
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
+      const tx = cx + Math.cos(a) * gr;
+      const ty = cy + Math.sin(a) * gr;
+      const s = r * 0.22;
+      x.fillRect(tx - s / 2, ty - s / 2, s, s);
+    }
+    x.beginPath(); x.arc(cx, cy, gr * 0.72, 0, TAU); x.fill();
+    x.fillStyle = '#c4882a';
+    x.beginPath(); x.arc(cx, cy, gr * 0.55, 0, TAU); x.fill();
+    x.fillStyle = '#2a1e3a';
+    x.beginPath(); x.arc(cx, cy, gr * 0.3, 0, TAU); x.fill();
+    x.restore();
+  }
+
   function drawHud(x) {
-    if (screen) return; // 覆盖层打开时不画 HUD 角落按钮
+    if (screen) return; // 覆盖层打开时不画 HUD
     const r2 = Math.max(18, Math.min(24, vh * 0.055));
     const cx = vw - r2 - 8;
-    /* 顶部按钮组起点：默认 16%h；真机时避让微信胶囊（__CAPSULE 已是虚拟坐标） */
+    /* 顶部起点：避让微信胶囊 + Lv 圆钮下方 */
     const capTop = (typeof __CAPSULE !== 'undefined' && __CAPSULE) ? __CAPSULE.bottom + r2 + 8 : 0;
     const hudTop = Math.max(vh * 0.16, capTop);
-    const defs = [
-      { icon: '⏸', fn: cb.pause, dy: hudTop },
-      { icon: '🔍', sub: zoomLv, fn: cb.cycleZoom, dy: hudTop + (r2 + 6) },
-      { icon: '⏩', sub: speedLv, fn: cb.cycleSpeed, dy: hudTop + (r2 + 6) * 2 },
-      { icon: cb.muted() ? '🔇' : '🔊', fn: cb.toggleMute, dy: hudTop + (r2 + 6) * 3 }
-    ];
-    for (const d2 of defs) {
-      const cy = d2.dy + r2;
-      x.save();
-      x.globalAlpha = 0.85;
-      x.beginPath(); x.arc(cx, cy, r2, 0, TAU);
-      x.fillStyle = 'rgba(30,26,58,.75)'; x.fill();
-      x.lineWidth = 2.5; x.strokeStyle = 'rgba(255,233,196,.7)'; x.stroke();
-      x.globalAlpha = 1;
-      x.fillStyle = '#ffe9c4';
-      x.textAlign = 'center'; x.textBaseline = 'middle';
-      x.font = '700 ' + Math.round(r2 * (d2.sub ? 0.72 : 0.9)) + 'px ' + FONT;
-      if (d2.sub) {
-        x.fillText(d2.icon, cx, cy - r2 * 0.32);
-        x.font = '900 ' + Math.round(r2 * 0.5) + 'px ' + FONT;
-        x.fillStyle = '#ffd34d';
-        x.fillText(d2.sub, cx, cy + r2 * 0.42);
-      } else {
-        x.fillText(d2.icon, cx, cy + 1);
-      }
-      x.restore();
-      hits.push({ x: cx - r2 - 4, y: cy - r2 - 4, w: (r2 + 4) * 2, h: (r2 + 4) * 2, fn: d2.fn });
-    }
+    const cy = hudTop + r2;
+    /* 像素齿轮 */
+    drawGear(x, cx, cy, r2);
+    hits.push({ x: cx - r2 - 4, y: cy - r2 - 4, w: (r2 + 4) * 2, h: (r2 + 4) * 2, fn: cb.pause });
   }
 
   /* ================= 对外 ================= */
@@ -587,6 +692,7 @@ const MUI = (() => {
     if (screen === 'menu') drawMenu(ctx);
     else if (screen === 'help') drawHelp(ctx);
     else if (screen === 'log') drawLog(ctx);
+    else if (screen === 'lb') drawLb(ctx);
     else if (screen === 'levelup') drawLevelup(ctx);
     else if (screen === 'chest') drawChest(ctx);
     else if (screen === 'pause') drawPause(ctx);
@@ -627,6 +733,8 @@ const MUI = (() => {
   function showChest(rows, ok) { chestRows = rows; onChestOk = ok; setScreen('chest'); }
   function showResult(d) { result = d; scroll.over = 0; setScreen('over'); }
   function clearOver() { if (screen === 'over') setScreen(null); }
+  function openLb() { scroll.lb = 0; setScreen('lb'); }
+  function setLbLine(t) { if (result) result.lbLine = t; }
 
   function init(opts) {
     cb = opts.callbacks;
@@ -636,6 +744,7 @@ const MUI = (() => {
 
   return {
     init, draw, touch, setScreen, showLevelUp, closeLevelUp, showChest, showResult, clearOver,
+    openLb, setLbLine,
     setViewport, setZoomLv: v => { zoomLv = v; }, setSpeedLv: v => { speedLv = v; },
     get screen() { return screen; },
     // 测试钩子：当前帧命中区（fire 直接触发回调，坐标用于 wx.__fire 全链路测试）

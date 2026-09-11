@@ -193,9 +193,9 @@
     if (typeof CustomEvent === 'undefined') {
       defGlobal('CustomEvent', function (type, opts) { this.type = type; this.detail = opts && opts.detail; });
     }
-    /* 安全 title 写入器：art_pixel（复制品经 sync 脱敏后）经此写 document.title——
-       锁死宿主（开发者工具嵌入式页面 title 只读）上静默忽略，不再炸像素管线 */
-    defGlobal('__setDocTitle', v => { try { document.title = String(v); } catch (e) { /* 只读宿主忽略 */ } });
+    /* 安全 title 写入器：完全空操作。小游戏无 document.title 概念，
+       art_pixel 的调试赋值（经 sync 脱敏到此函数）不需要真正写入任何地方 */
+    defGlobal('__setDocTitle', function () { /* no-op */ });
     /* 像素素材就绪门：fork 版 main.js 保留与 H5 一致的 __PIXEL_GATE 启动门；
        5s 兜底防素材异常卡启动（art_pixel 失败路径也会派发就绪事件）。
        gate 同时挂 win 与 GameGlobal：真机 window===win，开发者工具 window 被锁则走 pin 路径。
@@ -207,6 +207,21 @@
     });
     win.__PIXEL_GATE = pixelGate;
     defGlobal('__PIXEL_GATE', pixelGate);
+    /* 重力感应：倾斜手机控制角色移动（与触摸摇杆共存，不触摸时生效） */
+    try {
+      if (wx.startAccelerometer) {
+        wx.startAccelerometer({ interval: 'game' });
+        const tiltDead = 0.15, tiltMax = 0.85;
+        const norm = v => {
+          const a = Math.abs(v);
+          return a <= tiltDead ? 0 : Math.sign(v) * Math.min(1, (a - tiltDead) / (tiltMax - tiltDead));
+        };
+        wx.onAccelerometerChange(res => {
+          /* 横屏轴映射：设备竖握 y 轴→横屏水平，x 轴→横屏竖直（符号可真机微调） */
+          g.__TILT = { x: norm(-res.y), y: norm(res.x) };
+        });
+      }
+    } catch (e) { /* 加速计不可用时静默（老设备） */ }
     /* 像素字体：内置 Fusion Pixel 子集。wx.loadFont 注册后返回字体家族名——
        tools_font.py 已把子集字体的家族名统一改写为 "Fusion Pixel"，与游戏内
        所有 '"Fusion Pixel",...' 字体栈精确命中（勿单独改动家族名，改请同步 tools_font.py） */
@@ -942,6 +957,10 @@ const Art = (() => {
   // 2x 分辨率烘焙：fn 依然在 w×h 的坐标空间里画
   function bake2(w, h, fn) {
     return bake(w * 2, h * 2, x => { x.scale(2, 2); fn(x, w, h); });
+  }
+  // 放大烘焙：把 ow×oh 的旧画法等比放大 k 倍居中画进 w×h（掉落物加大字号用，20260911 反馈）
+  function bigger(w, h, k, ow, oh, fn) {
+    return bake2(w, h, x => { x.translate(w / 2, h / 2); x.scale(k, k); x.translate(-ow / 2, -oh / 2); fn(x, ow, oh); });
   }
   function whiteVersion(c) {
     return bake(c.width, c.height, x => {
@@ -1777,7 +1796,8 @@ const Art = (() => {
     x.restore();
   }
   const items = {
-    gem1: bake2(44, 36, x => { x.translate(24, 19); x.rotate(-0.35); fish(x, '#cfe0f2', '#9db8d4', 0.85, '#aebfd6'); }),
+    // 经验三色鱼干：绿=小怪 蓝=精英 金=头目（最小一档曾用灰白，真机上被看成"小圆点"，20260911 反馈改绿）
+    gem1: bake2(44, 36, x => { x.translate(24, 19); x.rotate(-0.35); fish(x, '#76c474', '#3a8642', 0.85, '#56a45a'); }),
     gem2: bake2(48, 40, x => { x.translate(26, 21); x.rotate(-0.35); fish(x, '#6fb7ff', '#3f80dd', 0.98, '#4d90e8'); }),
     gem3: bake2(54, 44, x => {
       x.translate(28, 23); x.rotate(-0.35); fish(x, '#ffd34d', '#ef9c2e', 1.18, '#eda93c');
@@ -1787,7 +1807,7 @@ const Art = (() => {
       for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2; x.lineTo(Math.cos(a) * 5, Math.sin(a) * 5); x.lineTo(Math.cos(a + 0.5) * 1.8, Math.sin(a + 0.5) * 1.8); }
       x.closePath(); x.fill(); x.restore();
     }),
-    coin: bake2(36, 36, x => {
+    coin: bigger(50, 50, 1.4, 36, 36, x => {
       circ(x, 18, 18, 13.5, lg(x, 0, 4, 0, 32, [[0, '#ffe488'], [1, '#f0a13c']]), '#c07f1e', 3);
       circ(x, 18, 18, 9.5, '#ffedb0');
       // 猫爪浮雕
@@ -1796,7 +1816,7 @@ const Art = (() => {
       circ(x, 13.4, 15.4, 1.6, '#e8a83c'); circ(x, 17.4, 13.8, 1.6, '#e8a83c'); circ(x, 22.6, 15.4, 1.6, '#e8a83c');
       shine(x, 13, 11, 3.4, 2, -0.5);
     }),
-    milk: bake2(40, 44, x => {
+    milk: bigger(56, 62, 1.4, 40, 44, x => {
       x.translate(20, 23);
       x.beginPath(); x.moveTo(-9, -8); x.lineTo(9, -8); x.lineTo(13, -17); x.lineTo(-13, -17); x.closePath();
       x.fillStyle = '#7fc3ea'; x.fill(); x.lineWidth = 2.8; x.strokeStyle = OUT; x.stroke();
@@ -1806,7 +1826,7 @@ const Art = (() => {
       blush(x, -4.4, 7.4, 1.8); blush(x, 4.4, 7.4, 1.8);
       shine(x, -6, -3, 2.4, 5, 0);
     }),
-    firework: bake2(40, 46, x => {
+    firework: bigger(54, 60, 1.3, 40, 46, x => {
       x.translate(20, 25);
       blob(x, x2 => { x2.moveTo(-6.5, 12); x2.lineTo(0, -13); x2.lineTo(6.5, 12); x2.closePath(); },
         lg(x, 0, -13, 0, 12, [[0, '#ff8ba0'], [1, '#f0506b']]), { ow: 2.8 });
@@ -1815,18 +1835,27 @@ const Art = (() => {
       strokePath(x, c => { c.moveTo(6.5, 12); c.quadraticCurveTo(9.5, 17, 6.5, 21); }, '#8a6236', 2.4);
       circ(x, 0, 0, 1.8, '#ffe9a0'); circ(x, -2.4, 6, 1.4, '#ffd9e6');
     }),
-    vacuum: bake2(44, 40, x => {
-      x.translate(22, 20); x.rotate(0.5);
+    // 马蹄磁铁（吸走全场鱼干+金币的道具）：旧画法是"红拱门+白脚"，真机上被认成紫色小袋子（20260911 反馈）——
+    // 重画成 ∪ 形马蹄磁铁，白色磁极指向右上，极间夹一条被吸住的小鱼干，与被动「磁铁鱼」图标同款语言
+    vacuum: bake2(56, 52, x => {
+      groundShadow(x, 28, 48, 17, 3.5);
+      x.translate(28, 29); x.rotate(0.55); x.scale(1.12, 1.12);
+      const R = 11, T = 5.6, TOP = -15;
+      blob(x, c => {
+        c.moveTo(-R, TOP); c.lineTo(-R, 0);
+        c.arc(0, 0, R, Math.PI, 0, true);
+        c.lineTo(R, TOP); c.lineTo(R - T, TOP); c.lineTo(R - T, 0);
+        c.arc(0, 0, R - T, 0, Math.PI, false);
+        c.lineTo(-(R - T), TOP); c.closePath();
+      }, lg(x, 0, TOP, 0, 13, [[0, '#ff9494'], [1, '#e05656']]), { ow: 3 });
+      rr(x, -R, TOP - 1, T, 7.5, 2); x.fillStyle = '#eef2f8'; x.fill(); x.lineWidth = 2.2; x.strokeStyle = OUT; x.stroke();
+      rr(x, R - T, TOP - 1, T, 7.5, 2); x.fillStyle = '#eef2f8'; x.fill(); x.lineWidth = 2.2; x.strokeStyle = OUT; x.stroke();
+      x.save(); x.translate(0, -11.5); fish(x, '#ffd34d', '#ef9c2e', 0.72, '#eda93c'); x.restore();
+      shine(x, -R + 3, -3, 2, 4.2, 0);
+      x.save(); x.translate(15, -12); x.fillStyle = '#fff';
       x.beginPath();
-      x.arc(0, 0, 11, Math.PI, 0, false);
-      x.lineTo(11, 8); x.lineTo(5, 8); x.lineTo(5, 0);
-      x.arc(0, 0, 5, 0, Math.PI, true);
-      x.lineTo(-11, 8); x.lineTo(-5, 8); x.closePath();
-      x.fillStyle = lg(x, 0, -11, 0, 8, [[0, '#ff9db0'], [1, '#f0506b']]);
-      x.fill(); x.lineWidth = 2.8; x.strokeStyle = OUT; x.stroke();
-      x.fillStyle = '#fff';
-      x.fillRect(-11, 6, 6, 5); x.fillRect(5, 6, 6, 5);
-      shine(x, -4, -7, 3.4, 2, -0.4);
+      for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2; x.lineTo(Math.cos(a) * 4, Math.sin(a) * 4); x.lineTo(Math.cos(a + 0.5) * 1.5, Math.sin(a + 0.5) * 1.5); }
+      x.closePath(); x.fill(); x.restore();
     }),
     chestClosed: bake2(72, 60, x => {
       groundShadow(x, 36, 57, 26, 5);
@@ -2433,7 +2462,6 @@ window.PIXEL_MANIFEST = {"player": {"idle": ["characters/daju/idle_1.png", "char
  */
 (function () {
   'use strict';
-  if (typeof Art === 'undefined') { __setDocTitle('AP:no Art'); return; }
 
   const MANIFEST_URL = 'pixel-assets/manifest.json';
 
@@ -2466,13 +2494,10 @@ window.PIXEL_MANIFEST = {"player": {"idle": ["characters/daju/idle_1.png", "char
     im.src = src;
   });
 
-  __setDocTitle('AP:fetching');
   const manifestPromise = window.PIXEL_MANIFEST
     ? Promise.resolve(window.PIXEL_MANIFEST)
     : fetch(MANIFEST_URL).then((r) => r.json());
   manifestPromise.then(async (M) => {
-    __setDocTitle('AP:stage-manifest');
-    __setDocTitle('AP:manifest-ok');
     const cache = {};
     const get = async (p) => (cache[p] || (cache[p] = await load('pixel-assets/' + p)));
 
@@ -2505,7 +2530,6 @@ window.PIXEL_MANIFEST = {"player": {"idle": ["characters/daju/idle_1.png", "char
     Art.menuCat = [menu1, menu2];
     Art.playerWhite = whiteOf(idle[0]);
 
-    __setDocTitle('AP:stage-player-done');
     /* ---- 敌人 ---- */
     for (const [type, def] of Object.entries(M.enemies)) {
       const scale = def.scale;
@@ -2523,14 +2547,18 @@ window.PIXEL_MANIFEST = {"player": {"idle": ["characters/daju/idle_1.png", "char
     /* ---- 弹幕 ---- */
     Art.projs = Art.projs || {};
     for (const [k, paths] of Object.entries(M.projs || {})) {
-      if (Array.isArray(paths)) Art.projs[k] = await Promise.all(paths.map((p) => frame(p, 2)));
+      if (Array.isArray(paths)) { const fr = await Promise.all(paths.map((p) => frame(p, 2))); Art.projs[k] = fr.length === 1 ? fr[0] : fr; }
       else Art.projs[k] = await frame(paths, 2);
     }
     if (M.slash) Art.slash = await frame(M.slash, 2);
 
     /* ---- 道具/图标 ---- */
     Art.items = Art.items || {};
-    for (const [k, p] of Object.entries(M.items || {})) Art.items[k] = await frame(p, 2);
+    // 地面掉落显示倍率：经验小鱼干维持 2x；金币/牛奶/烟花/磁铁是高价值道具，
+    // 真机小屏（1X 视野优先）下 2x 太小看不清，统一 3x（20260911 试玩反馈）；
+    // 宝箱是最稀有奖励，3x 保持「宝箱 > 一切散落道具」的视觉层级（开箱演出按显式尺寸绘制，不受影响）
+    const ITEM_SCALE = { coin: 3, milk: 3, firework: 3, vacuum: 3, chestClosed: 3, chestOpen: 3 };
+    for (const [k, p] of Object.entries(M.items || {})) Art.items[k] = await frame(p, ITEM_SCALE[k] || 2);
     Art.icons = Art.icons || {};
     for (const [k, p] of Object.entries(M.icons || {})) Art.icons[k] = await frame(p, 2);
     const pawFallback = await (async () => { const p = M.icons && M.icons.paw ? await get(M.icons.paw) : null; return p ? bake(p, 2) : canvas2(112, 112); })();
@@ -2544,7 +2572,6 @@ window.PIXEL_MANIFEST = {"player": {"idle": ["characters/daju/idle_1.png", "char
     /* ---- 王冠（精英） ---- */
     if (M.eliteCrown) Art.eliteCrown = await frame(M.eliteCrown, 2);
 
-    __setDocTitle('AP:stage-before-sky moon=' + (M.sky ? 'hasSky' : 'noSky'));
     /* ---- 像素天空（月/云/天际线） ---- */
     if (M.sky) {
       Art.sky = Art.sky || {};
@@ -2555,21 +2582,19 @@ window.PIXEL_MANIFEST = {"player": {"idle": ["characters/daju/idle_1.png", "char
     }
 
     /* ---- 全局：像素渲染 ---- */
-    const cv = document.getElementById('game');
+    const cv = null;
     if (cv) {
       const ctx = cv.getContext('2d');
       const noSmooth = () => { ctx.imageSmoothingEnabled = false; };
       noSmooth();
-      ;
+      
       window.addEventListener('resize', noSmooth);
     }
-    __setDocTitle('喵都幸存者 Meow Survivors');
-    __PIXEL_GATE_RESOLVE();;
+    __PIXEL_GATE_RESOLVE();
   }).catch((err) => {
     /* 兜底:file:// 下 fetch 会被浏览器拦下,或素材缺失——回退原版矢量美术,游戏照常开局 */
     console.error('[art_pixel] 素材加载失败，回退原版矢量美术：', err);
-    __setDocTitle('喵都幸存者 Meow Survivors');
-    __PIXEL_GATE_RESOLVE();;
+    __PIXEL_GATE_RESOLVE();
   });
 })();
 
@@ -4008,6 +4033,75 @@ const MAPS = (() => {
       if (dy) { const ny = a.y + dy; if (this.free(a.x, ny, isCat, r)) a.y = ny; }
     }
     speedAt(x, y) { return this.code(x, y) === T.SLOW ? (this.meta.slowMul || 0.55) : 1; }
+    /* ---- 玩家流场寻路（v18）：以玩家为源的窗口 BFS，怪物读场内梯度绕墙走向玩家 ----
+       窗口默认 ±80 格（1600px）；可走 = 非 BLOCK 且非 CAT（猫道对怪物是墙）。
+       rebuild 0 分配（TypedArray 复用），整场 BFS ~2.6 万格 <1ms，0.35s 一轮。 */
+    buildFlow(px, py, halfCells) {
+      const gw = this.gw, gh = this.gh, grid = this.grid;
+      const cgx = Math.min(gw - 1, Math.max(0, (px / CELL) | 0));
+      const cgy = Math.min(gh - 1, Math.max(0, (py / CELL) | 0));
+      const x0 = Math.max(0, cgx - halfCells), y0 = Math.max(0, cgy - halfCells);
+      const x1 = Math.min(gw - 1, cgx + halfCells), y1 = Math.min(gh - 1, cgy + halfCells);
+      const w = x1 - x0 + 1, h = y1 - y0 + 1, n = w * h;
+      if (!this.flowDist || this.flowDist.length < n) {
+        this.flowDist = new Int32Array(n);
+        this.flowQ = new Int32Array(n);
+      }
+      const dist = this.flowDist, q = this.flowQ;
+      for (let i = 0; i < n; i++) dist[i] = 0;
+      const walk = (gx, gy) => {
+        const t = grid[gy * gw + gx];
+        return t !== T.BLOCK && t !== T.CAT;
+      };
+      let sx = cgx, sy = cgy; // 源=玩家格；被墙盖住（罕见）就找最近可走格
+      if (!walk(sx, sy)) {
+        let found = false;
+        for (let r = 1; r <= 6 && !found; r++) {
+          for (let dy = -r; dy <= r && !found; dy++) for (let dx = -r; dx <= r && !found; dx++) {
+            const gx = cgx + dx, gy = cgy + dy;
+            if (gx < x0 || gx > x1 || gy < y0 || gy > y1) continue;
+            if (walk(gx, gy)) { sx = gx; sy = gy; found = true; }
+          }
+        }
+        if (!found) { this.flowReady = false; return; }
+      }
+      let head = 0, tail = 0;
+      dist[(sy - y0) * w + (sx - x0)] = 1;
+      q[tail++] = (sy - y0) * w + (sx - x0);
+      while (head < tail) { // 4 邻接 BFS（不对角穿缝）
+        const cur = q[head++];
+        const cd = dist[cur];
+        const cx = cur % w, cy = (cur / w) | 0;
+        const gx = x0 + cx, gy = y0 + cy;
+        if (cx > 0 && dist[cur - 1] === 0 && walk(gx - 1, gy)) { dist[cur - 1] = cd + 1; q[tail++] = cur - 1; }
+        if (cx < w - 1 && dist[cur + 1] === 0 && walk(gx + 1, gy)) { dist[cur + 1] = cd + 1; q[tail++] = cur + 1; }
+        if (cy > 0 && dist[cur - w] === 0 && walk(gx, gy - 1)) { dist[cur - w] = cd + 1; q[tail++] = cur - w; }
+        if (cy < h - 1 && dist[cur + w] === 0 && walk(gx, gy + 1)) { dist[cur + w] = cd + 1; q[tail++] = cur + w; }
+      }
+      this.flowW = w; this.flowH = h; this.flowX0 = x0; this.flowY0 = y0;
+      this.flowReady = true;
+    }
+    flowDir(x, y, out) { // out=[dx,dy]：8 邻中距离场最小者方向；不在场内/无路 → false
+      if (!this.flowReady) return false;
+      const gx = (x / CELL) | 0, gy = (y / CELL) | 0;
+      const cx = gx - this.flowX0, cy = gy - this.flowY0;
+      if (cx < 0 || cy < 0 || cx >= this.flowW || cy >= this.flowH) return false;
+      const w = this.flowW, dist = this.flowDist;
+      const cur = dist[cy * w + cx];
+      if (cur <= 0) return false;
+      let bd = cur, bx = 0, by = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const nx = cx + dx, ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= this.flowW || ny >= this.flowH) continue;
+        const d2 = dist[ny * w + nx];
+        if (d2 > 0 && d2 < bd) { bd = d2; bx = dx; by = dy; }
+      }
+      if (!bx && !by) return false; // 已在玩家格/局部最低点：保持原方向
+      const l = Math.hypot(bx, by);
+      out[0] = bx / l; out[1] = by / l;
+      return true;
+    }
     nearWalk(x, y, isCat, maxR) {
       maxR = maxR || 640;
       x = U.clamp(x, 24, this.w - 24); y = U.clamp(y, 24, this.h - 24);
@@ -4022,6 +4116,41 @@ const MAPS = (() => {
         }
       }
       return { x, y };
+    }
+    /* ---- 老鼠妈妈的老巢（意见10）：确定性扫描四条边带盖一座怪房子 ----
+       占地 6×4 格（120×80px）实心阻挡（杂兵/主角绕行、流场绕导、鸽子视线被挡），
+       落点要求：占地与外圈一格都不压墙/猫道（保证四面可绕行不堵路）、离出生点 ≥600px。
+       扫到即定（同一张图每次进房位置固定）；全图都放不下就放弃（houseSpot 为空，不盖）。 */
+    placeMotherHouse() {
+      const CW = 6, CH = 4;
+      const ok = (gx, gy) => {
+        if (gx < 2 || gy < 2 || gx + CW > this.gw - 2 || gy + CH > this.gh - 2) return false;
+        const cx = (gx + CW / 2) * CELL, cy = (gy + CH / 2) * CELL;
+        if (this.start && Math.hypot(cx - this.start.x, cy - this.start.y) < 600) return false;
+        for (let y = gy - 1; y <= gy + CH; y++) for (let x = gx - 1; x <= gx + CW; x++) {
+          const t = this.grid[y * this.gw + x];
+          if (t === T.BLOCK || t === T.CAT) return false;
+        }
+        return true;
+      };
+      const trySpot = (gx, gy) => {
+        if (!ok(gx, gy)) return false;
+        this.fill('walk', gx * CELL - 14, gy * CELL - 14, CW * CELL + 28, CH * CELL + 28); // 房基垫层
+        this.stamp(gx * CELL, gy * CELL, CW * CELL, CH * CELL, T.BLOCK);
+        this.houseSpot = { x: (gx + CW / 2) * CELL, y: (gy + CH / 2) * CELL, w: CW * CELL, h: CH * CELL };
+        return true;
+      };
+      const band = [6, 7, 8, 9, 10, 11, 12]; // 距边界 120~240px：够"边缘"又不贴死边界墙
+      const mx0 = (this.gw * 0.2) | 0, mx1 = (this.gw * 0.8) | 0;
+      const my0 = (this.gh * 0.2) | 0, my1 = (this.gh * 0.8) | 0;
+      const sides = [
+        b => { for (let gx = mx0; gx <= mx1 - CW; gx++) if (trySpot(gx, b)) return true; return false; },
+        b => { for (let gx = mx1 - CW; gx >= mx0; gx--) if (trySpot(gx, this.gh - b - CH)) return true; return false; },
+        b => { for (let gy = my0; gy <= my1 - CH; gy++) if (trySpot(b, gy)) return true; return false; },
+        b => { for (let gy = my1 - CH; gy >= my0; gy--) if (trySpot(this.gw - b - CW, gy)) return true; return false; }
+      ];
+      const off = (U.hash2(this.w | 0, this.h | 0, 91) * 4) | 0; // 各图起始边错开，别都挤在同一边
+      for (const b of band) for (let s = 0; s < 4; s++) if (sides[(off + s) % 4](b)) return;
     }
     /* ---- 渲染 ---- */
     tile(tx, ty) {
@@ -5373,6 +5502,8 @@ const MAPS = (() => {
 
 
   const list = [oldtown(), sakura(), harbor(), onsen(), carnival()];
+  // 意见10：每张手工地图边缘盖一座「老鼠妈妈的老巢」（确定性选点，捣毁后妈妈提前降临）
+  for (const m of list) m.placeMotherHouse();
   // 经典「无尽街区」伪地图：curMap = null 时走旧的无限 chunk 逻辑
   const endless = {
     id: 'endless', endless: true,
@@ -5470,7 +5601,9 @@ window.GAME_CONFIG = {
     batchPerMin: 2.2,     // 每过多少分钟，单次刷怪数量 +1
     despawnR: 1.6,        // 敌人离屏幕多少倍屏距后传送回包围圈
     countRoundMul: 2,     // 轮间杂兵数量乘数：×此值^(轮次-1)（只作用于杂兵刷怪与同屏上限，不影响 boss/精英/事件）
-    countHardMax: 480,    // 数量乘区后的同屏硬顶（性能保护；超出部分自然转化为"补怪速度"）
+    countHardMax: 480,    // 旧数量硬顶（已被 screenCap 取代，保留兼容旧导出配置）
+    screenCap: 150,       // 意见6：同屏怪物硬上限——到顶立即停刷（性能保护，怪物多了网页版会卡）
+    capResume: 100,       // 意见6：续刷回落阈值——打到少于该数量才继续刷后面的批次（滞回防抖动）
     countBatchPerTick: 64, // 单帧单波刷怪钳制（防帧率尖峰；刷怪拍间隔不变，场子靠下一拍继续补满）
 
     // 轮间指数成长（意见2）：叠在既有机制（轮内曲线×轮次难度表/动态难度）之上。
@@ -5501,6 +5634,7 @@ window.GAME_CONFIG = {
     batchCount: 4,        // 每轮批次数
     bossFrac: 0.72,       // 批次头目在批次进度达到该比例时降临
     dynamicStartRound: 2, // 该轮起进入动态难度（此前轮次查 fixed 固定表；第 1 轮固定 = 基准教学轮）
+    motherEndsRun: true,  // 意见10：讨伐老鼠妈妈即强制结算收官（无限模式代码全保留，改 false 可重新开放「继续夜巡」）
 
     /* dynamicStartRound 之前的轮次：固定难度表（乘在轮内成长曲线之上）
        hp 敌人生命 / dmg 敌人伤害 / spawn 刷怪间隔倍率(越小越密) / eliteHp 宝箱精英生命 /
@@ -5676,9 +5810,35 @@ window.GAME_CONFIG = {
     slime:  { gap: 0.55, life: 2.8, r: 15, slow: 0.55, max: 70 }         // 蜗牛：黏液带只拖慢主角（与地形减速叠乘）
   },
 
+  /* ---------- 反卡死兜底（流场寻路之上的最后一道保险） ----------
+     判定：敌人"想追主角却持续原地"（每帧实际位移 < 期望位移×frac）连续累计满阈值秒数，
+     就瞬移进主角视野内贴屏幕边缘的随机可走点——头目打不到会卡死下一批次/轮次，杂兵则是纯体验损耗。
+     蓄力定身 / 冲刺预警 / 全屏斩预警 / 贴身互殴等"合法站着"的状态一律不计时。 */
+  antiStuck: {
+    trashT: 2.5,      // 杂兵 / 精英：连续卡住 2.5 秒即瞬移
+    bossT: 3.0,       // 头目级（批次头目 / 鼠王 / 老鼠妈妈）：3 秒（演出多，阈值放宽）
+    frac: 0.25,       // 每帧实际位移 < 期望位移(sp×dt)×frac 视为"没动"（减速地形/减速效果已含在 sp 里）
+    engageR: 26,      // 离主角碰撞半径之外再近这个距离就不判定——贴身互殴是对局常态
+    reWarpCd: 6,      // 瞬移后的保护冷却（秒），防落点不理想时连锁瞬移
+    warpStun: 1.2,    // 瞬移落地的发懵时间（秒）：不动不攻击，避免冲锋怪落地就贴脸突袭
+    edgeInset: 56,    // 瞬移落点距屏幕边缘的内缩距离（px，另加敌人体半径），保证"进视野且贴边"
+    minPlayerD: 190,  // 落点离主角的最小距离（另加敌人体半径），不在主角脸上开门
+    samples: 24       // 每次瞬移最多试探的落点数
+  },
+
   /* ---------- 装备槽位 ----------
      weapon = 默认猫爪之外可选的武器数（场上共 1+4 把）；选满后不再出现新武器 */
   slots: { weapon: 4, passive: 6 },
+
+  /* ---------- 老鼠妈妈的老巢（意见10） ----------
+     每张手工地图的边缘自动盖一座（maps.js placeMotherHouse 确定性选点）：
+     固定 100 万血、头顶血条，捣毁后老鼠妈妈提前降临——构筑成型早的猫可以主动提速，
+     全服比谁的 BD 更快讨伐老鼠妈妈。第三轮鼠王被讨伐后仍强制放出妈妈（原规则不变）。 */
+  motherHouse: {
+    hp: 1000000,  // 固定血量（100 万），不吃任何难度/轮间/动态倍率
+    r: 48,        // 碰撞半径（武器命中/杂兵绕行）
+    gold: 50      // 捣毁后掉落的金币（聊表心意，真正的奖励是妈妈现身）
+  },
 
   /* ---------- 猫爪印（玩家侧全武器词条，区别于 rounds.affixes 的头目词条） ----------
      玩家 ≥ minLevel 级后【只在宝箱中出现】（升级三选一永不出印卡）；不占槽位、无层数上限、跨轮累计。
@@ -5809,9 +5969,11 @@ window.GAME_CONFIG = {
     milkHeal: 30,      // 牛奶回复量
     fireworkDmg: 150,  // 烟花全屏伤害
     gemMax: 330,       // 场上鱼干上限（超出自动合并，性能保护）
-    gemTiers: [        // 经验分层：大于等于 v 的掉高级鱼干（从大到小排列）
-      { v: 25, tier: 3 },
-      { v: 5,  tier: 2 },
+    gemTiers: [        // 经验分层：大于等于 v 的掉高级鱼干（从大到小排列）。
+                       // v4 重校准：杂兵经验 1~5，旧阈值 25/5 让金色几乎不可见 →
+                       // 绿=小怪(1~2) 蓝=精英怪(3~7) 金=头目奖赏(≥8)，三色在日常即可集齐
+      { v: 8,  tier: 3 },
+      { v: 3,  tier: 2 },
       { v: 1,  tier: 1 }
     ],
     chestDrop: 0.001,  // 普通怪掉宝箱的基础概率（约 1/1000 击杀）
@@ -5863,6 +6025,7 @@ const DATA = (() => {
         dmgPerMin: 0.045, spdPerMin: 0.012, spdMax: 1.28, capBase: 38, capPerMin: 16.5, capMax: 265,
         spawnBase: 1.05, spawnPerMin: 0.055, spawnMin: 0.24, batchPerMin: 2.2, despawnR: 1.6,
         countRoundMul: 2, countHardMax: 480, countBatchPerTick: 64,
+        screenCap: 150, capResume: 100,
         roundHpMul: 3, roundDmgMul: 2, roundSpdMul: 1.1 },
       // 70 级后成长规则：autoFrom 级起升级自动+属性；chestOnlyFrom 级起只能靠宝箱升级
       postLevel: { autoFrom: 70, chestOnlyFrom: 80, hpPerLv: 0.02, spdPerLv: 0.01 },
@@ -5880,8 +6043,15 @@ const DATA = (() => {
         steal:  { radius: 250, keep: 170, eatR: 22 },
         slime:  { gap: 0.55, life: 2.8, r: 15, slow: 0.55, max: 70 }
       },
+      // 反卡死兜底（流场寻路之上的最后一道保险）：想追却持续原地累计满阈值 → 瞬移进主角视野贴屏幕边缘
+      antiStuck: {
+        trashT: 2.5, bossT: 3.0, frac: 0.25, engageR: 26,
+        reWarpCd: 6, warpStun: 1.2, edgeInset: 56, minPlayerD: 190, samples: 24
+      },
+      // 老鼠妈妈的老巢（意见10）：每张手工地图边缘一座，捣毁后妈妈提前降临
+      motherHouse: { hp: 1000000, r: 48, gold: 50 },
       rounds: {
-        parTime: 900, batchCount: 4, bossFrac: 0.72, dynamicStartRound: 2,
+        parTime: 900, batchCount: 4, bossFrac: 0.72, dynamicStartRound: 2, motherEndsRun: true,
         batchBossTypes: ['goose', 'raccoon', 'bulldog', 'calico'],
         batchBossHpFracs: [0.07, 0.13, 0.25, 0.45],
         batchBossScale: 1.85,
@@ -6339,6 +6509,7 @@ const Result = (() => {
     let bestTxt = '最佳纪录 · 坚持 ' + U.fmtTime(d.best.time) + ' · 最远第 ' + (d.best.rounds || 1) + ' 轮';
     if (d.bestMother) bestTxt += ' · 老鼠妈妈最速 ' + U.fmtTime(d.bestMother);
     $('best-line2').textContent = bestTxt;
+    $('lb-rank-line').hidden = true; // 排行榜提交成功后由 showLbRank 填入（ leaderboard.js 异步回来）
   }
 
   /* ================= 战报分享图 ================= */
@@ -6546,7 +6717,16 @@ const Result = (() => {
     }, 'image/png');
   }
 
-  return { open, saveImage, renderCard };
+  /* 云端排行榜提交回执（lb 提交是异步的：面板先出，名次回来再点亮这一行。
+     小游戏版不执行本函数——那边的名次走 MUI.setLbLine，见 tools_transform.py 的改写） */
+  function showLbRank(rank) {
+    const el = $('lb-rank-line');
+    if (!el || !rank) return;
+    el.textContent = '🏆 恭喜上榜：云端第 ' + rank + ' 名！';
+    el.hidden = false;
+  }
+
+  return { open, saveImage, renderCard, showLbRank };
 })();
 
 ;
@@ -6560,8 +6740,30 @@ const Result = (() => {
 'use strict';
 const CHANGELOG = {
   /* 工具记账：已收录到哪个提交（gen-changelog.js 维护，请勿手改） */
-  lastCommit: '9d72df366a50918f98dcbd4f3077b678a44c3bd0',
+  lastCommit: '38812bb005412d0e10607b37f700699f7f2694d3',
   entries: [
+    {
+      date: "2026-09-12", version: "20260912a", title: "🐭 老鼠妈妈的老巢现身！捣毁它，提前开战！", items: [
+        { t: 'new', text: "每张地图的边缘多了一座贴满抓痕的怪房子——那是老鼠妈妈的老巢！捣毁它（足足一百万血，头顶有血条），老鼠妈妈就会亲自杀来。构筑成型的猫不用再苦等第三轮，直捣老巢提前开战，比比谁的 BD 通关更快！" },
+        { t: 'bal', text: "讨伐老鼠妈妈即通关收官、弹出结算——「继续夜巡」玩法先收回仓库休整，未来可能会重新开放" },
+        { t: 'opt', text: "怪物太多时自动控制刷怪节奏，怪物潮依旧汹涌，页面更流畅不卡顿" },
+        { t: 'opt', text: "界面更清爽：暂停面板只留音效开关；右上角杀敌/金币的图标再也不会被长数字盖住啦" },
+      ]
+    },
+    {
+      date: "2026-09-11", version: "20260911b", title: "🧲 磁铁真身归位，掉落物全面放大！", items: [
+        { t: 'fix', text: "之前地上那个神秘的『紫色小袋子』揭晓：它其实是吸走全场鱼干的磁铁道具！现在重画成经典马蹄磁铁，白色磁极之间还夹着一条被吸住的小鱼干，一眼就看懂" },
+        { t: 'opt', text: "金币、牛奶、烟花、磁铁四种掉落物整体放大约 50%，最稀有的宝箱也放大一圈，手机小屏全都可以看得清清楚楚" },
+        { t: 'fix', text: "经验小鱼干三色归位：绿=小怪、蓝=精英、金=头目，最小的一档不再是灰扑扑的小圆点" },
+      ]
+    },
+    {
+      date: "2026-09-11", version: "20260911a", title: "🏆 云端排行榜：双端一张榜！", items: [
+        { t: 'new', text: "主菜单新增「🏆 排行榜」：和小游戏、网页两端的猫们比一比谁夜巡得更远！榜单按到达轮次与坚持时长排序，讨伐老鼠妈妈有 👑 标记、加速通关有 ⏩ 标记" },
+        { t: 'new', text: "打完一局自动上报最好成绩，结算面板会告诉你排到了云端第几名；网页端在榜单里自定义猫名，小游戏端点 🎲 随机换一个可爱的名字" },
+        { t: 'new', text: "排行榜走微信云开发，双端数据互通；还没排上班也不要紧，你的最佳纪录一直稳稳存在本机" },
+      ]
+    },
     {
       date: "2026-09-09", version: "20260909d", title: "⏸️ 暂停面板直达 音效/缩放/加速！", items: [
         { t: 'opt', text: "「休息一下」暂停面板新增一行三钮：🔊音效开关、🔍画面缩放、⏩游戏加速，与「继续夜巡」「重新开始」同层并排，点一下就切换，不用再进平衡设置里找（平衡设置回归纯配置抽屉）" },
@@ -6636,6 +6838,164 @@ const CHANGELOG = {
 };
 
 ;
+/* 喵都幸存者 - 🏆 云端排行榜服务（微信云开发双端互通）
+   ─────────────────────────────────────────────────────
+   同一份文件跑在两个端（引擎层零改动复用，sync 进小游戏 bundle）：
+   · 微信小游戏：wx.cloud.callFunction（免域名免备案，openid 由服务端取）
+   · 网页 H5：官方 @wxcloud/cloud-sdk 未登录模式（new cloud.Cloud）→ 同一组云函数
+   两端都只通过云函数读写（lb_top / lb_submit），不直连数据库——权限面最小，
+   服务端统一做数值校验 + 限频 + 「每只猫只留最好成绩」。
+   开通步骤见 docs/排行榜云开发方案.md：开通后把环境 ID 填进下面的 LB_ENV 即可，
+   未配置时本模块自动进入「未开启」降级态，主菜单/结算一切照旧，绝不影响游玩。 */
+'use strict';
+const LB = (() => {
+  /* ========== ⚙ 配置区：开通云开发后填写（docs/排行榜云开发方案.md） ========== */
+  const ENV_ID = '';            // 云开发环境 ID（控制台首页复制，形如 cla0xxxxxxxxxxxxx）
+  const RESOURCE_APPID = '';    // 小游戏 AppID（网页端未登录模式要用；与 project.config.json 一致）
+  const COL = 'lb_meow';        // 数据库集合名
+  const FUNC_TOP = 'lb_top';
+  const FUNC_SUBMIT = 'lb_submit';
+  const LIMIT = 50;             // 榜单容量
+  const TTL = 30 * 1000;        // 榜单缓存 30s，防止手狂点刷新烧配额
+
+  const UID_KEY = 'meow_lb_uid', NAME_KEY = 'meow_lb_name';
+
+  /* ---------- 平台判定 ---------- */
+  const IN_WX = typeof wx !== 'undefined' && typeof wx.cloud !== 'undefined';
+  const HAS_WEB_SDK = typeof cloud !== 'undefined' && typeof cloud.Cloud === 'function';
+
+  const available = () => !!ENV_ID && (IN_WX || HAS_WEB_SDK);
+
+  /* ---------- 本地身份（免登录：一台设备一只猫） ---------- */
+  const rndB36 = n => Math.floor(Math.random() * Math.pow(36, n)).toString(36).padStart(n, '0');
+  const uid = (() => {
+    let v = '';
+    try { v = localStorage.getItem(UID_KEY); } catch (e) { /* 存储不可用就每次随机 */ }
+    if (!v || !/^[a-z0-9-]{6,40}$/i.test(v)) {
+      v = 'u-' + Date.now().toString(36) + '-' + rndB36(6);
+      try { localStorage.setItem(UID_KEY, v); } catch (e) { /* noop */ }
+    }
+    return v;
+  })();
+
+  const CAT_A = ['大橘', '三花', '奶牛', '白团', '煤球', '虎斑', '奶黄', '芝麻', '汤圆', '狸奴'];
+  const CAT_B = ['夜巡', '守卫', '闪电', '锦鲤', '软软', '爱吃鱼', '不睡觉', '爱晒太阳', '踏月', '追风'];
+  function genName() {
+    const p = U.pick, n = U.randInt;
+    return p(CAT_B) + '的' + p(CAT_A) + '#' + n(100, 999);
+  }
+  // 昵称消毒：去控制字符/尖括号引号，限 12 字符
+  function cleanName(n) {
+    const s = String(n == null ? '' : n).replace(/[\u0000-\u001f<>\"'`\\/]/g, '').trim();
+    return s.slice(0, 12);
+  }
+  let name = '';
+  try { name = cleanName(localStorage.getItem(NAME_KEY)); } catch (e) { /* noop */ }
+  if (!name) { name = genName(); saveName(name); }
+  function saveName(n) { try { localStorage.setItem(NAME_KEY, n); } catch (e) { /* noop */ } }
+  const getName = () => name;
+  function setName(n) {
+    const c = cleanName(n);
+    if (c) { name = c; saveName(c); }
+    return name;
+  }
+  function cycleName() { name = genName(); saveName(name); return name; }
+
+  /* ---------- 云端通道（懒初始化，双端各一条） ---------- */
+  let wxInited = false;
+  let webCloud = null, webIniting = null;
+  function callFunc(fname, data) {
+    try {
+      if (IN_WX) {
+        if (!wxInited) { wx.cloud.init({ env: ENV_ID }); wxInited = true; }
+        return wx.cloud.callFunction({ name: fname, data }).then(r => r && r.result);
+      }
+      // 网页端：官方 Web SDK 未登录模式（需资源方小游戏开「环境共享」并部署 cloudbase_auth）
+      if (!webCloud) {
+        webCloud = new cloud.Cloud({
+          identityless: true,
+          resourceAppid: RESOURCE_APPID,
+          resourceEnv: ENV_ID
+        });
+        webIniting = webCloud.init();
+      }
+      return webIniting.then(() => new Promise((resolve, reject) => {
+        webCloud.callFunction({
+          name: fname, data,
+          success: r => resolve(r && r.result),
+          fail: err => reject(err)
+        });
+      })).catch(e => { webCloud = null; webIniting = null; throw e; }); // 失败后允许下次重试
+    } catch (e) {
+      return Promise.reject(e); // init 同步抛错（环境无效等）也走统一异步失败路径
+    }
+  }
+
+  /* ---------- 快照（同步可读，面板每帧直接画） ----------
+     state: off=未配置 | loading | ok | fail ；me 始终回退本地最佳 */
+  const snap = { state: available() ? 'loading' : 'off', rows: [], err: '' };
+  let lastFetch = 0, fetching = null;
+  function meLocal() {
+    const b = U.storage.get('meow_best', null);
+    return {
+      name, rank: U.storage.get('meow_lb_rank', 0),
+      round: (b && b.rounds) || 0, time: (b && b.time) || 0
+    };
+  }
+  function snapshot() { return { snap, me: meLocal() }; }
+
+  function refresh(force) {
+    if (!available()) { snap.state = 'off'; return Promise.resolve(snap); }
+    const now = Date.now();
+    if (!force && now - lastFetch < TTL) return Promise.resolve(snap);
+    if (fetching) return fetching;
+    snap.state = 'loading';
+    fetching = callFunc(FUNC_TOP, { limit: LIMIT })
+      .then(r => {
+        lastFetch = Date.now();
+        if (r && r.ok && Array.isArray(r.rows)) { snap.rows = r.rows; snap.state = 'ok'; }
+        else { snap.state = 'fail'; snap.err = (r && r.reason) || 'bad-response'; }
+      })
+      .catch(e => { snap.state = 'fail'; snap.err = String((e && e.errMsg) || e && e.message || e); })
+      .then(() => { fetching = null; return snap; });
+    return fetching;
+  }
+
+  /* ---------- 提交成绩（结算时调用；失败静默，绝不影响游戏） ----------
+     返回 { ok, rank } 或 null（未配置/失败）。服务端只保留该身份的最好成绩。 */
+  function submitRun(d) {
+    if (!available()) return Promise.resolve(null);
+    const payload = {
+      uid,
+      name,
+      round: Math.round(d.round || 0),
+      time: Math.round(d.time || 0),
+      kills: Math.round(d.kills || 0),
+      lv: Math.round(d.lv || 1),
+      gold: Math.round(d.gold || 0),
+      win: !!d.win,
+      mother: !!d.mother,
+      map: String(d.map || '').slice(0, 24),
+      sp: Math.round(d.sp || 1),
+      ver: 1
+    };
+    return callFunc(FUNC_SUBMIT, payload)
+      .then(r => {
+        if (r && r.ok && r.rank) {
+          try { U.storage.set('meow_lb_rank', r.rank); } catch (e) { /* noop */ }
+        }
+        return r || null;
+      })
+      .catch(() => null);
+  }
+
+  /* ---------- 调试用（?dev=1 面板可看状态） ---------- */
+  const debug = () => ({ env: ENV_ID || '(未配置)', platform: IN_WX ? 'wx' : 'web', hasWebSdk: HAS_WEB_SDK, snap });
+
+  return { available, snapshot, refresh, submitRun, getName, setName, cycleName, debug, LIMIT };
+})();
+
+;
 /* 喵都幸存者 · 小游戏版 Canvas UI 层
    H5 版的菜单/三选一/宝箱/暂停/结算/帮助/更新日志都是 HTML 覆盖层，小游戏没有 DOM——
    这里用同一套绘本风格在主画布上重建全部界面。
@@ -6653,7 +7013,7 @@ const MUI = (() => {
   let cards = [], onPick = null;      // 三选一
   let chestRows = [], onChestOk = null; // 宝箱
   let result = null;                  // 结算数据（fork 已整理成展示结构）
-  const scroll = { help: 0, log: 0, over: 0 };
+  const scroll = { help: 0, log: 0, over: 0, lb: 0 };
   const drag = { on: false, y: 0, base: 0, moved: 0 };
   let hits = []; // 本帧命中区 [{x,y,w,h,fn}]
   let mapPvs = null; // 地图缩略图懒烘焙 [canvas]
@@ -6799,16 +7159,16 @@ const MUI = (() => {
       hits.push({ x: cx, y: cy, w: pw, h: ph + 20, fn: () => cb.selectMap(m.id) });
     }
     // 按钮行
-    const bw = Math.min(150, vw * 0.16), bh = Math.max(38, vh * 0.095);
+    const bw = Math.min(128, vw * 0.135), bh = Math.max(38, vh * 0.095);
     const by = vh - bh - Math.max(16, vh * 0.05);
-    const totalW = bw * 3 + 24;
-    const bx0 = Math.max(vw * 0.02, vw / 2 - bw * 1.2);
+    const bx0 = Math.max(vw * 0.02, vw / 2 - (bw * 4 + 12 * 3) / 2);
     btn(x, cb.startRun, bx0, by, bw, bh, '开始夜巡 !', 'primary');
     btn(x, cb.showHelp, bx0 + bw + 12, by, bw, bh, '玩法说明', 'secondary');
-    btn(x, cb.showLog, bx0 + (bw + 12) * 2, by, bw, bh, '📜更新日志', 'secondary');
+    btn(x, cb.showLb, bx0 + (bw + 12) * 2, by, bw, bh, '🏆排行榜', 'secondary');
+    btn(x, cb.showLog, bx0 + (bw + 12) * 3, by, bw, bh, '📜更新日志', 'secondary');
     if (cb.hasNewLog()) {
       x.save();
-      x.translate(bx0 + (bw + 12) * 2 + bw - 14, by - 6);
+      x.translate(bx0 + (bw + 12) * 3 + bw - 14, by - 6);
       x.rotate(Math.sin(now * 4) * 0.12);
       x.font = '900 12px ' + FONT;
       x.textAlign = 'center'; x.textBaseline = 'middle';
@@ -6823,7 +7183,7 @@ const MUI = (() => {
     x.font = '400 ' + Math.round(vh * 0.033) + 'px ' + FONT;
     x.textAlign = 'center'; x.textBaseline = 'middle';
     x.fillStyle = 'rgba(207,208,255,.6)';
-    x.fillText('拖动屏幕移动 · 武器全自动 · 界面右上角可暂停/缩放/加速', vw / 2, vh - 12);
+    x.fillText('拖动屏幕移动 · 武器全自动 · 右上角齿轮可暂停/静音', vw / 2, vh - 12);
     x.restore();
   }
 
@@ -6949,6 +7309,97 @@ const MUI = (() => {
     drag.area = { x: px + 24, y: lp, w: w - 48, h: lhh, key: 'log', contentH };
   }
 
+  /* ================= 🏆 云端排行榜（数据由 LB 维护，主程序经回调注入；未配置云时自动降级） ================= */
+  function drawLb(x) {
+    const s = cb.lbSnapshot ? cb.lbSnapshot() : null;
+    const snap = (s && s.snap) || { state: 'off', rows: [] };
+    const me = s && s.me;
+    const w = Math.min(vw * 0.88, 640), h = vh * 0.9;
+    const px = (vw - w) / 2, py = (vh - h) / 2;
+    panel(x, px, py, w, h);
+    x.save();
+    x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.font = '700 ' + Math.round(vh * 0.065) + 'px ' + FONT;
+    x.fillStyle = '#5b4a44';
+    x.fillText('🏆 云端排行榜', vw / 2, py + vh * 0.065);
+    x.restore();
+    // 猫名行：当前名字 + 🎲换名 / 🔄刷新（小游戏无输入法面板，换名=随机生成，网页端可自由输入）
+    const btnH = Math.max(28, vh * 0.078);
+    const rowY = py + vh * 0.115;
+    x.save();
+    x.textAlign = 'left'; x.textBaseline = 'middle';
+    x.font = '400 ' + Math.round(vh * 0.036) + 'px ' + FONT;
+    x.fillStyle = '#6d5a52';
+    x.fillText('🐾 ' + (me ? me.name : ''), px + 28, rowY + btnH / 2, w - 200);
+    x.restore();
+    btn(x, cb.lbRename, px + w - 178, rowY, 84, btnH, '🎲换名', 'secondary');
+    btn(x, cb.lbRefresh, px + w - 88, rowY, 60, btnH, '🔄', 'secondary');
+    // 榜单列表（超出面板高度时整列滚动，与更新日志同款）
+    const fs = Math.max(11, Math.round(vh * 0.034));
+    const listTop = rowY + btnH + 12;
+    const listH = h - (listTop - py) - vh * 0.15;
+    const rowH = Math.max(30, vh * 0.08);
+    const contentH = snap.state === 'ok' ? Math.max(1, snap.rows.length * (rowH + 6)) : 1;
+    const a = scrollArea(x, 'lb', px + 24, listTop, w - 48, listH, contentH);
+    x.save();
+    x.textAlign = 'left'; x.textBaseline = 'middle';
+    if (snap.state === 'off') {
+      x.fillStyle = '#96806f'; x.textAlign = 'center';
+      x.fillText('☁️ 云端排行榜暂未开启～', vw / 2, listTop + listH * 0.35, w - 60);
+      x.fillText('你的最佳纪录会存在本机，开通后自动上云互通。', vw / 2, listTop + listH * 0.35 + fs * 1.9, w - 60);
+    } else if (snap.state === 'loading') {
+      x.fillStyle = '#96806f'; x.textAlign = 'center';
+      x.fillText('☁️ 正在爬上屋顶看榜…', vw / 2, listTop + listH * 0.35);
+    } else if (snap.state === 'fail') {
+      x.fillStyle = '#96806f'; x.textAlign = 'center';
+      x.fillText('云端开小差了，点 🔄 再试试～', vw / 2, listTop + listH * 0.35);
+    } else if (!snap.rows.length) {
+      x.fillStyle = '#96806f'; x.textAlign = 'center';
+      x.fillText('虚位以待，等一只勇敢的猫 🐾', vw / 2, listTop + listH * 0.35);
+    } else {
+      const medals = ['🥇', '🥈', '🥉'];
+      const yy = listTop + 4 - scroll.lb;
+      snap.rows.forEach((e, i) => {
+        const ry = yy + i * (rowH + 6);
+        if (ry + rowH < listTop - 24 || ry > listTop + a.clipH + 12) return; // 视口外不画
+        const top3 = i < 3;
+        rr(x, px + 26, ry, w - 52, rowH, 10);
+        x.fillStyle = '#fff'; x.fill();
+        x.lineWidth = 2.5; x.strokeStyle = top3 ? '#e05656' : '#ffe1b0'; x.stroke();
+        x.textAlign = 'center';
+        x.font = '700 ' + Math.round(rowH * 0.42) + 'px ' + FONT;
+        x.fillStyle = '#e05656';
+        x.fillText(top3 ? medals[i] : '#' + (i + 1), px + 54, ry + rowH / 2);
+        x.textAlign = 'left';
+        x.font = '400 ' + Math.round(rowH * 0.4) + 'px ' + FONT;
+        x.fillStyle = '#453244';
+        const nm = ((cb.lbMapTag && cb.lbMapTag(e.map)) || '') + ' ' + (e.name || '无名猫猫');
+        x.fillText(nm, px + 82, ry + rowH / 2, w - 260);
+        x.textAlign = 'right';
+        x.font = '400 ' + Math.round(rowH * 0.34) + 'px ' + FONT;
+        x.fillStyle = '#96806f';
+        const sc = '第' + (e.round || 1) + '轮 ' + U.fmtTime(e.time || 0) +
+          (e.mother ? ' 👑' : e.win ? ' 🏁' : '') + (e.sp > 1 ? ' ⏩' + e.sp + 'X' : '');
+        x.fillText(sc, px + w - 42, ry + rowH / 2);
+      });
+    }
+    x.restore(); // 文本状态层
+    x.restore(); // scrollArea 裁剪层（少一次会把按钮全部裁掉）
+    // 我的最佳（始终显示，云端名次若有则追加）
+    if (me) {
+      x.save();
+      x.textAlign = 'center'; x.textBaseline = 'middle';
+      x.font = '400 ' + Math.round(vh * 0.032) + 'px ' + FONT;
+      x.fillStyle = '#96806f';
+      const t = me.round ? '🐾 我 · 最佳：第 ' + me.round + ' 轮 · ' + U.fmtTime(me.time || 0) + (me.rank ? ' · 🏆榜上第' + me.rank + '名' : '')
+        : '🐾 我（' + me.name + '）· 还没有出战记录';
+      x.fillText(t, vw / 2, py + h - vh * 0.12, w - 40);
+      x.restore();
+    }
+    btn(x, cb.closeOverlay, vw / 2 - 60, py + h - vh * 0.105, 120, Math.max(30, vh * 0.08), '知道啦！', 'primary');
+    drag.area = { x: px + 24, y: listTop, w: w - 48, h: listH, key: 'lb', contentH };
+  }
+
   /* ================= 升级三选一 ================= */
   function drawLevelup(x) {
     x.save();
@@ -7064,7 +7515,7 @@ const MUI = (() => {
     btn(x, onChestOk, vw / 2 - 70, py + h - Math.max(34, vh * 0.09) - 8, 140, Math.max(32, vh * 0.08), '开心收下！', 'primary');
   }
 
-  /* ================= 暂停 ================= */
+  /* ================= 暂停（⚙ 齿轮打开；意见9：只留音效开关） ================= */
   function drawPause(x) {
     x.save();
     x.fillStyle = 'rgba(12,10,34,.66)';
@@ -7079,12 +7530,18 @@ const MUI = (() => {
     x.fillStyle = '#8a6fb8';
     x.fillText('💤 休息一下', vw / 2, py + h * 0.16);
     x.restore();
-    const bw = w * 0.68, bh = Math.max(32, vh * 0.09), gap = Math.max(8, vh * 0.024);
+    const bh = Math.max(32, vh * 0.09), gap = Math.max(8, vh * 0.024);
+    const rowW = w * 0.68, rowX = vw / 2 - rowW / 2;
     let by = py + h * 0.3;
-    btn(x, cb.resume, vw / 2 - bw / 2, by, bw, bh, '继续夜巡', 'primary'); by += bh + gap;
-    btn(x, cb.restart, vw / 2 - bw / 2, by, bw, bh, '重新开始', 'secondary'); by += bh + gap;
-    btn(x, cb.quitToMenu, vw / 2 - bw / 2, by, bw, bh, '回主菜单', 'secondary'); by += bh + gap;
-    btn(x, cb.toggleMute, vw / 2 - bw / 2, by, bw, bh, cb.muted() ? '音效：关' : '音效：开', 'secondary');
+    /* Row 1: 继续夜巡（全宽 primary） */
+    btn(x, cb.resume, rowX, by, rowW, bh, '继续夜巡', 'primary'); by += bh + gap;
+    /* Row 2: 重新开始 | 回主菜单 */
+    const bw2 = (rowW - gap) / 2;
+    btn(x, cb.restart, rowX, by, bw2, bh, '重新开始', 'secondary');
+    btn(x, cb.quitToMenu, rowX + bw2 + gap, by, bw2, bh, '回主菜单', 'secondary'); by += bh + gap;
+    /* Row 3: 🔊音效（意见9：缩放/加速钮已按正式网页版 UI 移除，点后不关面板） */
+    btn(x, cb.toggleMute, rowX, by, rowW, bh, cb.muted() ? '🔇 静音中' : '🔊 音效', 'secondary');
+    btn(x, cb.toggleMute, rowX + (bw3 + gap) * 2, by, bw3, bh, cb.muted() ? '🔇' : '🔊', 'secondary');
   }
 
   /* ================= 结算 ================= */
@@ -7166,6 +7623,12 @@ const MUI = (() => {
     x.font = '400 ' + fs + 'px ' + FONT;
     x.fillStyle = '#96806f';
     x.fillText(d.bestTxt, cxx, yy + 18, w - 60);
+    // 云端排行榜回执（提交异步返回后由 MUI.setLbLine 点亮）
+    if (d.lbLine) {
+      x.font = '700 ' + Math.round(fs * 1.05) + 'px ' + FONT;
+      x.fillStyle = '#c47b1e';
+      x.fillText(d.lbLine, cxx, yy + 18 + fs * 1.8, w - 60);
+    }
     x.restore(); // 标题/文案层
     x.restore(); // scrollArea 的裁剪层（少一次会把按钮全部裁掉）
     // 按钮行（面板底部固定，不随滚动）
@@ -7179,42 +7642,44 @@ const MUI = (() => {
     drag.area = { x: px + 14, y: lp, w: w - 28, h: lhh, key: 'over', contentH };
   }
 
-  /* ================= HUD 角落按钮（游戏中） ================= */
+  /* ================= HUD：右上角像素齿轮⚙（点开暂停面板） ================= */
+  function drawGear(x, cx, cy, r) {
+    x.save();
+    /* 底盘圆 */
+    x.globalAlpha = 0.88;
+    x.fillStyle = 'rgba(30,26,58,.82)';
+    x.beginPath(); x.arc(cx, cy, r, 0, TAU); x.fill();
+    x.lineWidth = 2; x.strokeStyle = 'rgba(255,233,196,.65)'; x.stroke();
+    x.globalAlpha = 1;
+    /* 像素齿轮（8 齿方头 + 圆环 + 中孔） */
+    const gr = r * 0.52;
+    x.fillStyle = '#ffd34d';
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
+      const tx = cx + Math.cos(a) * gr;
+      const ty = cy + Math.sin(a) * gr;
+      const s = r * 0.22;
+      x.fillRect(tx - s / 2, ty - s / 2, s, s);
+    }
+    x.beginPath(); x.arc(cx, cy, gr * 0.72, 0, TAU); x.fill();
+    x.fillStyle = '#c4882a';
+    x.beginPath(); x.arc(cx, cy, gr * 0.55, 0, TAU); x.fill();
+    x.fillStyle = '#2a1e3a';
+    x.beginPath(); x.arc(cx, cy, gr * 0.3, 0, TAU); x.fill();
+    x.restore();
+  }
+
   function drawHud(x) {
-    if (screen) return; // 覆盖层打开时不画 HUD 角落按钮
+    if (screen) return; // 覆盖层打开时不画 HUD
     const r2 = Math.max(18, Math.min(24, vh * 0.055));
     const cx = vw - r2 - 8;
-    /* 顶部按钮组起点：默认 16%h；真机时避让微信胶囊（__CAPSULE 已是虚拟坐标） */
+    /* 顶部起点：避让微信胶囊 + Lv 圆钮下方 */
     const capTop = (typeof __CAPSULE !== 'undefined' && __CAPSULE) ? __CAPSULE.bottom + r2 + 8 : 0;
     const hudTop = Math.max(vh * 0.16, capTop);
-    const defs = [
-      { icon: '⏸', fn: cb.pause, dy: hudTop },
-      { icon: '🔍', sub: zoomLv, fn: cb.cycleZoom, dy: hudTop + (r2 + 6) },
-      { icon: '⏩', sub: speedLv, fn: cb.cycleSpeed, dy: hudTop + (r2 + 6) * 2 },
-      { icon: cb.muted() ? '🔇' : '🔊', fn: cb.toggleMute, dy: hudTop + (r2 + 6) * 3 }
-    ];
-    for (const d2 of defs) {
-      const cy = d2.dy + r2;
-      x.save();
-      x.globalAlpha = 0.85;
-      x.beginPath(); x.arc(cx, cy, r2, 0, TAU);
-      x.fillStyle = 'rgba(30,26,58,.75)'; x.fill();
-      x.lineWidth = 2.5; x.strokeStyle = 'rgba(255,233,196,.7)'; x.stroke();
-      x.globalAlpha = 1;
-      x.fillStyle = '#ffe9c4';
-      x.textAlign = 'center'; x.textBaseline = 'middle';
-      x.font = '700 ' + Math.round(r2 * (d2.sub ? 0.72 : 0.9)) + 'px ' + FONT;
-      if (d2.sub) {
-        x.fillText(d2.icon, cx, cy - r2 * 0.32);
-        x.font = '900 ' + Math.round(r2 * 0.5) + 'px ' + FONT;
-        x.fillStyle = '#ffd34d';
-        x.fillText(d2.sub, cx, cy + r2 * 0.42);
-      } else {
-        x.fillText(d2.icon, cx, cy + 1);
-      }
-      x.restore();
-      hits.push({ x: cx - r2 - 4, y: cy - r2 - 4, w: (r2 + 4) * 2, h: (r2 + 4) * 2, fn: d2.fn });
-    }
+    const cy = hudTop + r2;
+    /* 像素齿轮 */
+    drawGear(x, cx, cy, r2);
+    hits.push({ x: cx - r2 - 4, y: cy - r2 - 4, w: (r2 + 4) * 2, h: (r2 + 4) * 2, fn: cb.pause });
   }
 
   /* ================= 对外 ================= */
@@ -7225,6 +7690,7 @@ const MUI = (() => {
     if (screen === 'menu') drawMenu(ctx);
     else if (screen === 'help') drawHelp(ctx);
     else if (screen === 'log') drawLog(ctx);
+    else if (screen === 'lb') drawLb(ctx);
     else if (screen === 'levelup') drawLevelup(ctx);
     else if (screen === 'chest') drawChest(ctx);
     else if (screen === 'pause') drawPause(ctx);
@@ -7265,6 +7731,8 @@ const MUI = (() => {
   function showChest(rows, ok) { chestRows = rows; onChestOk = ok; setScreen('chest'); }
   function showResult(d) { result = d; scroll.over = 0; setScreen('over'); }
   function clearOver() { if (screen === 'over') setScreen(null); }
+  function openLb() { scroll.lb = 0; setScreen('lb'); }
+  function setLbLine(t) { if (result) result.lbLine = t; }
 
   function init(opts) {
     cb = opts.callbacks;
@@ -7274,6 +7742,7 @@ const MUI = (() => {
 
   return {
     init, draw, touch, setScreen, showLevelUp, closeLevelUp, showChest, showResult, clearOver,
+    openLb, setLbLine,
     setViewport, setZoomLv: v => { zoomLv = v; }, setSpeedLv: v => { speedLv = v; },
     get screen() { return screen; },
     // 测试钩子：当前帧命中区（fire 直接触发回调，坐标用于 wx.__fire 全链路测试）
@@ -7342,7 +7811,7 @@ const MUI = (() => {
 
   /* ================= 缩放 / 加速档位 / 音效开关 ================= */
   /* 单一真源：档位与静音只在 main.js 的 setZoom/setSpeed/toggleMuted 里改；变化经 updateToggleBtns 广播
-     meow-toggles 事件，config_panel.js 监听它刷新暂停面板的三钮文字（音效/缩放/加速与「继续夜巡」同级）。 */
+     meow-toggles 事件（意见9：界面按钮只留 🔊 音效钮，缩放/加速保留快捷键 -/= · 1/2/3，小游戏端面板同步精简）。 */
   function updateToggleBtns() { MUI.setZoomLv(userZoom + 'X'); MUI.setSpeedLv(gameSpeed + 'X'); }
   function setZoom(lv) {
     if (!ZOOM_LV.includes(lv) || lv === userZoom) return;
@@ -7602,6 +8071,7 @@ const MUI = (() => {
     cam: { x: 0, y: 0 }, shake: 0, flash: 0,
     player: null, enemies: [], projs: [], slashes: [], zones: [], gems: [],
     slimes: [], eprojs: [], // 意见6：蜗牛黏液带 / 敌方羽毛弹
+    warps: 0, // 反卡死瞬移计数（dev 面板观测）
     pickups: [], chests: [], parts: [], dmgs: [], after: [],
     spawnT: 1, pendingLv: 0, bossWarn: 0, bossSpawned: false, boss: null,
     kills: 0, gold: 0, gemCombo: 0, gemComboT: 0, idleMeowT: 8,
@@ -7609,6 +8079,7 @@ const MUI = (() => {
     flies: [], petals: [], uid: 0, slowmoT: 0, lowHpPulse: 0, heartT: 0, evoPending: false,
     // 轮次系统
     round: 1, roundTime: 0, waveT: 0, batch: 0, batchBossSpawned: false, roundBossPending: false,
+    spawnHold: false, // 意见6：同屏到顶停刷 / 回落阈值恢复的滞回状态
     countMul: 1, // 轮间杂兵数量乘数 ×2^(轮次-1)（只作用于杂兵刷怪与同屏上限）
     roundMods: null, prevRound: null, batchBossSpawnT: 0, batchBossFrac: 1,
     bossSpawnT: -1, bossTTKSamples: [], pendingBossAffixes: [],
@@ -7743,6 +8214,7 @@ const MUI = (() => {
     G.dyingT = 0; G.victoryT = 0; G.shake = 0; G.flash = 0;
     G.motherWarnT = 0; G.motherActive = false; G.motherDone = false; G.mother = null;
     G.motherSpawnT = 0; G.motherTTK = 0; G.motherFxT = 0;
+    G.house = null; // 意见10：老鼠妈妈的老巢实体（每局重盖）
     G.banner = null;
     G.prevRound = null;
     G.catHint = false; G.dustT = 0;
@@ -7771,6 +8243,8 @@ const MUI = (() => {
     });
     G.heartT = 0; G.evoPending = false;
     startRound(1);
+    // 意见10：地图边缘盖老鼠妈妈的老巢——捣毁可提前引出妈妈，比比谁的 BD 通关更快
+    if (spawnMotherHouse()) banner('🗺️ 地图边缘有一座贴满抓痕的怪房子……捣毁它，老鼠妈妈就会现身！', 4);
   }
 
   /* ================= 轮次系统 ================= */
@@ -7794,6 +8268,7 @@ const MUI = (() => {
     G.bossSpawnT = -1;
     G.roundMods = DATA.roundMods(n, G.prevRound);
     G.spawnT = n > 1 ? 4 : 1.2; // 轮间喘息：留出清理残怪的时间窗
+    G.spawnHold = false;
     G.rsHpSum = 0; G.rsHpN = 0; G.lvStart = G.player ? (G.player.lv || 1) : 1;
     if (DEV) console.log('[round ' + n + ']', JSON.stringify(G.roundMods));
     if (n > 1) banner('🌙 第 ' + n + ' 轮开始！（批次 1/' + R.batchCount + ' · 威胁 ×' + G.roundMods.hp.toFixed(2) + '）', 3.4);
@@ -7907,12 +8382,14 @@ const MUI = (() => {
     const data = collectResult(true);
     data.mother = true;
     data.motherTTK = G.motherTTK;
-    data.continueOffer = true;
+    // 意见10：讨伐妈妈即强制收官（无限模式代码全保留，rounds.motherEndsRun=false 可重新开放「继续夜巡」）
+    data.continueOffer = DATA.CFG.rounds && DATA.CFG.rounds.motherEndsRun === false;
     const mb = U.storage.get('meow_best_mother', 0);
     if (!mb || G.motherTTK < mb) U.storage.set('meow_best_mother', Math.round(G.motherTTK * 10) / 10);
     data.bestMother = U.storage.get('meow_best_mother', 0);
     data.best = saveBest();
     showResultPanel(data);
+    submitRunToLb(data);
     Sfx.sfx.victory(); Sfx.meow('happy');
   }
 
@@ -8003,9 +8480,10 @@ const MUI = (() => {
       // 意见6：行为特性计时（首次触发时间随机错开，避免同帧群体行动）
       dashSt: 0, dashT: 0, dashCd: U.rand(1.5, 3.2), dashX: 0, dashY: 0,
       fireCd: U.rand(1.2, 2.8), slimeT: U.rand(0.2, 0.7), stealT: 0, tgtGem: null,
+      stkT: 0, stkX: x, stkY: y, // 反卡死：卡住累计时长 / 上帧采样点
       boss: false, dieDone: false
     };
-    if (elite) { e.hp *= EC.hpMul * (M ? M.eliteHp : 1); e.maxHp = e.hp; e.dmg *= EC.dmgMul; e.r *= 1.5; e.spd *= EC.spdMul; }
+    if (elite) { e.hp *= EC.hpMul * (M ? M.eliteHp : 1) * (DATA.DIFF.eliteHp || 1); e.maxHp = e.hp; e.dmg *= EC.dmgMul; e.r *= 1.5; e.spd *= EC.spdMul; }
     G.enemies.push(e);
     return e;
   }
@@ -8026,6 +8504,7 @@ const MUI = (() => {
       spd: def.spd * RP.spd, dmg: def.dmg * DATA.DIFF.enemyDmg * RP.dmg, r: def.r,
       phase: 0, flash: 0, slowT: 0, slowF: 1, elite: false, scale: 1,
       blinkT: U.rand(2, 5), blinkA: 0, faceT: 0, landT: 0,
+      stkT: 0, stkX: bx, stkY: by,
       boss: true, state: 'entry', entryT: 0.9, entryD: 0.9, st: 0, summonT: F.bossSummonCd, lungeT: 0, lungeCd: 0, orbCd: 0, dieDone: false
     };
     b.affixes = affixIds || [];
@@ -8056,12 +8535,50 @@ const MUI = (() => {
       spd: def.spd, dmg: def.dmg, r: def.r,
       phase: 0, flash: 0, slowT: 0, slowF: 1, elite: false, scale: 1,
       blinkT: U.rand(2, 5), blinkA: 0, faceT: 0, landT: 0,
+      stkT: 0, stkX: bx, stkY: by,
       boss: true, mother: true, state: 'entry', entryT: 1.1, entryD: 1.1,
       st: 0, skillT: DATA.CFG.finale.motherSkillCd, orbCd: 0, dieDone: false
     };
     G.enemies.push(m); G.mother = m;
     G.motherSpawnT = G.time; // 讨伐用时从这里起算（结算核心指标）
     banner('🐭 老鼠妈妈 降临！讨伐她！', 3);
+  }
+  // 意见10：老鼠妈妈的老巢——每张手工地图边缘一座（maps.js placeMotherHouse 选点并盖实心碰撞）
+  // 固定 100 万血不吃任何倍率；不可移动、不受击退、不参与刷怪上限与卡死判定；捣毁后妈妈提前降临。
+  function spawnMotherHouse() {
+    if (!curMap || !curMap.houseSpot || G.house) return false;
+    const C = DATA.CFG.motherHouse || {};
+    const hp = C.hp || 1000000;
+    const e = {
+      uid: ++G.uid, type: 'house', def: { name: '老鼠妈妈的老巢', xp: 0, mass: 60 },
+      x: curMap.houseSpot.x, y: curMap.houseSpot.y, vx: 0, vy: 0, kx: 0, ky: 0,
+      hp, maxHp: hp, spd: 0, dmg: 0, r: C.r || 48,
+      phase: 0, flash: 0, slowT: 0, slowF: 1, elite: false, scale: 1,
+      blinkT: 1e9, blinkA: 0, faceT: 0,
+      stkT: 0, stkX: curMap.houseSpot.x, stkY: curMap.houseSpot.y,
+      house: true, ruined: false, boss: false, dieDone: false
+    };
+    G.enemies.push(e); G.house = e;
+    return true;
+  }
+  // 老巢被捣毁：留下实心废墟（残骸继续挡路），走与第 3 轮强制降临同一条警告演出链召出妈妈
+  function destroyMotherHouse(e) {
+    G.house = null;
+    G.kills++;
+    e.ruined = true;
+    G.gold += (DATA.CFG.motherHouse || {}).gold || 50;
+    popStars(e.x, e.y, '#c9b08a', 26);
+    part({ x: e.x, y: e.y, life: 0.7, size: 120, col: '#d9c8a8', kind: 'ring' });
+    part({ x: e.x, y: e.y - 20, life: 0.5, size: 70, col: '#8a6f4d', kind: 'ring' });
+    for (let i = 0; i < 10; i++) {
+      const a2 = U.rand(0, TAU);
+      part({ x: e.x + Math.cos(a2) * 30, y: e.y, vx: Math.cos(a2) * U.rand(60, 170), vy: -U.rand(40, 150), life: U.rand(0.4, 0.9), size: U.rand(3, 7), col: '#8a6f4d', kind: 'dot', grav: 340 });
+    }
+    G.flash = 0.35; addShake(10, true);
+    Sfx.sfx.bigPop();
+    if (G.motherActive || G.motherDone) { banner('老巢塌了——老鼠妈妈早就亲自出马了！', 2.2); return; }
+    banner('🏚️ 老巢被捣毁！老鼠妈妈杀气腾腾地赶来了！', 3);
+    G.after.push({ t: 1.1, fn: startMotherWarn });
   }
   // 老鼠妈妈行为：追击 + 唯一技能「全屏斩」（10 秒一次，0.6 秒预警）
   function updateMother(m, dt) {
@@ -8083,7 +8600,6 @@ const MUI = (() => {
       return;
     }
     if (m.state === 'chase') {
-      bossUnstuck(m, Math.hypot(G.player.x - m.x, G.player.y - m.y), dt);
       m.skillT -= dt;
       if (m.skillT <= F.motherTele) { m.state = 'tele'; m.st = F.motherTele; Sfx.sfx.motherWarn(); }
     } else if (m.state === 'tele') { // 预警结束 → 全屏斩
@@ -8115,6 +8631,7 @@ const MUI = (() => {
   }
   function killEnemy(e) {
     if (e.dieDone) return;
+    if (e.house) { destroyMotherHouse(e); return; } // 意见10：老巢捣毁走专属流程（残骸保留，妈妈降临）
     e.dieDone = true;
     G.kills++;
     // 掉落
@@ -8184,7 +8701,7 @@ const MUI = (() => {
     }
   }
   function hitEnemy(e, dmg, kbx, kby, opts) {
-    if (e.dieDone || e.hp <= 0) return;
+    if (e.dieDone || e.hp <= 0 || (e.house && e.ruined)) return;
     opts = opts || {};
     // 猫爪印：全局会心/汲血并入每一次伤害（全武器 + 光环/区域生效）
     if (mods.crit) opts.crit = (opts.crit || 0) + mods.crit;
@@ -8196,7 +8713,7 @@ const MUI = (() => {
     G.dmgTotal += d; G.secDmg += d; // 结算统计：总伤害 + 当前秒桶
     e.flash = 0.12;
     dmgNum(e.x, e.y - e.r - 6, d, crit);
-    if (!e.boss && !opts.noKb) {
+    if (!e.boss && !e.house && !opts.noKb) {
       const res = e.kbRes != null ? e.kbRes : (e.def.kbRes || 1);
       const m = e.def.mass || 1;
       e.kx += (kbx || 0) * res / m; e.ky += (kby || 0) * res / m;
@@ -8257,6 +8774,7 @@ const MUI = (() => {
     return out;
   }
   const qbuf = [];
+  const FD = [0, 0]; // 流场方向复用数组
 
   /* ================= 武器系统 ================= */
   // 意见5：所有攻击无论叠加后理论范围多大，最大都不超过屏幕——
@@ -8607,8 +9125,63 @@ const MUI = (() => {
   }
 
   /* ================= 敌人更新 ================= */
+  // 反卡死瞬移落点：主角视野内、贴屏幕边缘的随机可走点（不在墙里/猫道里、离主角保底距离）
+  function warpStuckPoint(e) {
+    const A = DATA.CFG.antiStuck;
+    const P = G.player;
+    const hw = Math.max(40, worldW / 2 - A.edgeInset - e.r);
+    const hh = Math.max(40, worldH / 2 - A.edgeInset - e.r);
+    const minD = A.minPlayerD + e.r;
+    let fb = null;
+    for (let i = 0; i < A.samples; i++) {
+      const side = (U.rand(0, 4)) | 0, t = U.rand(-1, 1); // 随机一条屏幕边 + 边上随机位置
+      let x = G.cam.x + (side === 1 ? hw : side === 3 ? -hw : t * hw);
+      let y = G.cam.y + (side === 0 ? -hh : side === 2 ? hh : t * hh);
+      if (curMap && !curMap.free(x, y, false, e.r * 0.8)) {
+        const p2 = curMap.nearWalk(x, y, false, A.edgeInset * 3); // 拉到附近可走点，尽量保住"贴边"
+        if (Math.abs(p2.x - x) + Math.abs(p2.y - y) > A.edgeInset * 3) continue; // 边缘是实心墙：换一处
+        x = p2.x; y = p2.y;
+      }
+      if (!fb) fb = { x, y };
+      if (U.dist2(x, y, P.x, P.y) >= minD * minD) return { x, y };
+    }
+    return fb || edgePoint(50); // 视野太小凑不出保底距离时退而求其次；理论兜底走屏外生成
+  }
+  // 卡住判定与瞬移：在敌人位移结算后调用。stkT 负值段 = 瞬移后的保护冷却。
+  function updateStuck(e, dt, dist, sp) {
+    const A = DATA.CFG.antiStuck, P = G.player;
+    const bossLv = e.boss || e.batchBoss;
+    const limit = bossLv ? A.bossT : A.trashT;
+    // 只统计"想追但追不动"：贴身互殴、入场演出不算卡；杂兵的合法定身（如三花蓄力）sp=0 天然排除。
+    // Boss 级的蓄力/冲锋阶段（sp 被置 0）也要计时：卡在"蓄力→撞墙冲锋"循环里的鼠王位移恒为零，
+    // 若不计时会被状态切换反复清零、永远打不死卡死轮次；健康 Boss 冲锋/追击有位移，照常衰减不会误判。
+    const bossCycle = e.boss && (e.state === 'tele' || e.state === 'charge');
+    const want = (sp > 1 || bossCycle) && dist > e.r + P.r + A.engageR;
+    // 阈值随自身速度等比缩放（蜗牛/鼠王全速行走也不能误判，勿加绝对像素下限）；moved = 本帧真实位移（含击退/分离）
+    const moved = Math.hypot(e.x - e.stkX, e.y - e.stkY);
+    if (e.stkT < 0) e.stkT = Math.min(0, e.stkT + dt); // 冷却走完才重新计时
+    else if (want && moved < sp * dt * A.frac + 0.02) e.stkT += dt;
+    else e.stkT = Math.max(0, e.stkT - dt * 2); // 正常移动快速清零：偶尔蹭一下墙不累积
+    e.stkX = e.x; e.stkY = e.y;
+    if (e.stkT < limit) return;
+    const pt = warpStuckPoint(e);
+    part({ x: e.x, y: e.y + 10, life: 0.4, size: e.r * 2.2, col: '#b9a6f5', kind: 'ring' });
+    e.x = pt.x; e.y = pt.y; e.kx = 0; e.ky = 0;
+    e.stkT = -A.reWarpCd;
+    e.warpStun = A.warpStun || 1.2; // 落地发懵：不动不攻击（公平交付，冲锋怪不再落地贴脸突袭）
+    e.flash = 0.22;
+    part({ x: e.x, y: e.y + 10, life: 0.5, size: e.r * 2.6, col: '#e2d6ff', kind: 'ring' });
+    popStars(e.x, e.y, '#cbb8f0', bossLv ? 12 : 6);
+    G.warps++;
+    if (bossLv) { banner(e.def.name + ' 撕开空间追了上来！', 2.2); Sfx.sfx.bigPop(); addShake(8, true); }
+    else Sfx.sfx.pop();
+  }
   function updateEnemies(dt) {
     const P = G.player;
+    if (curMap) { // 玩家流场：0.35s 一轮窗口 BFS（所有怪物据此绕墙寻路）
+      G.flowT = (G.flowT || 0) - dt;
+      if (G.flowT <= 0) { G.flowT = 0.35; curMap.buildFlow(P.x, P.y, 80); }
+    }
     const cap = trashCap(); // 远敌传送回收的补怪判断使用同一杂兵上限
     for (let i = G.enemies.length - 1; i >= 0; i--) {
       const e = G.enemies[i];
@@ -8622,25 +9195,31 @@ const MUI = (() => {
         part({ x: e.x, y: e.y - e.r, life: 0.5, size: 30, col: '#ff6b81', kind: 'ring' });
       }
       if (e.slowT > 0) { e.slowT -= dt; } else e.slowF = 1;
+      if (e.warpStun > 0) e.warpStun -= dt; // 反卡死瞬移落地的发懵倒计时
       // 眨眼（生命感）
       e.blinkT -= dt;
       if (e.blinkT <= 0) { e.blinkA = 0.14; e.blinkT = U.rand(2.4, 5.5); }
       if (e.blinkA > 0) e.blinkA -= dt;
-      // 清理太远的敌人（传送回包围圈）
+      // 清理太远的敌人（传送回包围圈）——老巢是地标，永不回收
       const pdx = P.x - e.x, pdy = P.y - e.y;
       const pd2 = pdx * pdx + pdy * pdy;
       const despawnR = Math.max(worldW, worldH) * 1.6;
-      if (pd2 > despawnR * despawnR && !e.boss && !e.elite) {
+      if (pd2 > despawnR * despawnR && !e.boss && !e.elite && !e.house) {
         U.swapRemove(G.enemies, i);
-        if (G.enemies.length < cap * 0.7) {
+        // 意见6：补怪同样遵守上限滞回（打到回落阈值以下才补）
+        if (G.enemies.length < (DATA.CFG.growth.capResume || 100)) {
           const pt = edgePoint(60);
           spawnEnemy(e.type, pt.x, pt.y, false);
         }
         continue;
       }
+      // 老巢：静止地标，不走 AI/位移/碰撞/卡死判定（受击与分离网格照常）
+      if (e.house) continue;
       const dist = Math.sqrt(pd2) || 1;
       let dirx = pdx / dist, diry = pdy / dist;
       let sp = e.spd * e.slowF * (curMap ? curMap.speedAt(e.x, e.y) : 1); // 地形减速同样拖慢鼠群
+      // 流场寻路（v18）：手工地图上按玩家流场绕墙追击，替代直线撞墙
+      if (curMap && curMap.flowReady && curMap.flowDir(e.x, e.y, FD)) { dirx = FD[0]; diry = FD[1]; }
       const def = e.def;
       if (def.zig) { // 麻雀 zigzag
         const px2 = -diry, py2 = dirx;
@@ -8746,40 +9325,18 @@ const MUI = (() => {
         dirx = dirx * 0.82 + sepx / l * 0.35; diry = diry * 0.82 + sepy / l * 0.35;
       }
       // 位移（手工地图上绕墙滑动；猫道对敌人是墙）
+      if (e.warpStun > 0) sp = 0; // 发懵中：原地发抖不移动（突进/冲锋也停）
       const mdx = (dirx * sp + e.kx) * dt, mdy = (diry * sp + e.ky) * dt;
       if (curMap) curMap.moveActor(e, mdx, mdy, false);
       else { e.x += mdx; e.y += mdy; }
       e.kx *= 1 - Math.min(1, dt * 7); e.ky *= 1 - Math.min(1, dt * 7);
-      // 精英/批次头目卡墙自救：批次头目到不了主角面前 → 波次永远无法推进，必须兜底
-      if (e.elite) bossUnstuck(e, dist, dt);
+      // 反卡死兜底：寻路仍解不了的死角，卡满阈值瞬移进主角视野贴边处（v19）
+      updateStuck(e, dt, dist, sp);
       // 碰撞玩家
       if (!e.dieDone && pd2 < (e.r + P.r) * (e.r + P.r)) {
         damagePlayer(e.dmg);
       }
     }
-  }
-  // Boss/精英/老鼠妈妈卡墙自救：视野扩大后生成距离翻倍，直线追人容易被楼房卡死——
-  // 每秒抽查一次位移，连续卡住且离主角还远时，就地"抄近路"绕到主角附近（带传送演出）。
-  // 位移阈值按自身移速缩放：蜗牛系精英移速只有 ~18px/s，固定阈值会把正常移动误判成卡死
-  function bossUnstuck(e, dist, dt) {
-    e.chkT = (e.chkT || 0) - dt;
-    if (e.chkT > 0) return;
-    e.chkT = 1;
-    const moved = e.chkX != null ? Math.hypot(e.x - e.chkX, e.y - e.chkY) : 999;
-    e.chkX = e.x; e.chkY = e.y;
-    const expect = Math.max(24, e.spd * (e.slowF || 1) * (curMap ? curMap.speedAt(e.x, e.y) : 1));
-    if (moved >= expect * 0.4 || dist < 220) { e.stuckN = 0; return; }
-    e.stuckN = (e.stuckN || 0) + 1;
-    if (e.stuckN < 2) return; // 连续 2 秒几乎没挪动才判定卡死
-    e.stuckN = 0;
-    const a2 = U.rand(0, TAU);
-    let nx = G.player.x + Math.cos(a2) * 300, ny = G.player.y + Math.sin(a2) * 300;
-    if (curMap) { const p2 = walkPoint(nx, ny, 500); nx = p2.x; ny = p2.y; }
-    part({ x: e.x, y: e.y, life: 0.5, size: 60, col: '#cfd0ff', kind: 'ring' });
-    e.x = nx; e.y = ny;
-    part({ x: nx, y: ny, life: 0.5, size: 70, col: '#cfd0ff', kind: 'ring' });
-    popStars(nx, ny, '#cfd0ff', 10);
-    Sfx.sfx.boss();
   }
   function updateBoss(b, dt, dist, dirx, diry) {
     const F = DATA.CFG.finale;
@@ -8801,7 +9358,6 @@ const MUI = (() => {
       return;
     }
     if (b.state === 'chase') {
-      bossUnstuck(b, dist, dt);
       if (b.summonT <= 0) {
         b.summonT = F.bossSummonCd;
         banner('鼠王：吱吱吱！孩子们上！', 2);
@@ -8853,6 +9409,7 @@ const MUI = (() => {
     let ix = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0);
     let iy = (keys.KeyS || keys.ArrowDown ? 1 : 0) - (keys.KeyW || keys.ArrowUp ? 1 : 0);
     if (joy.on) { ix = joy.x; iy = joy.y; }
+    else if (typeof __TILT !== 'undefined' && (__TILT.x || __TILT.y)) { ix = __TILT.x; iy = __TILT.y; }
     if (P.stunT > 0) { ix = 0; iy = 0; }
     const l = Math.hypot(ix, iy);
     P.moving = l > 0.15;
@@ -8951,9 +9508,18 @@ const MUI = (() => {
           Sfx.sfx.firework();
           G.flash = 0.5; addShake(12, true);
           part({ x: P.x, y: P.y, life: 0.5, size: 60, col: '#ffd34d', kind: 'ring' });
+          // 烟花伤害 = max(固定 150, 屏内「满血杂兵」中最低血者的 80%)：杂兵血量随轮次膨胀后，烟花依然保有清场存在感
+          // （头目/老鼠妈妈/老巢不参与基准计算，避免屏内只剩满血 Boss 或老巢时被一刀削 80%）
+          let fullMin = Infinity;
+          for (const e of G.enemies) {
+            if (e.dieDone || e.boss || e.mother || e.house || e.maxHp == null) continue;
+            if (Math.abs(e.x - P.x) >= worldW / 2 + 60 || Math.abs(e.y - P.y) >= worldH / 2 + 60) continue;
+            if (e.hp >= e.maxHp && e.hp < fullMin) fullMin = e.hp;
+          }
+          const fdmg = Math.max(DATA.CFG.drops.fireworkDmg, Number.isFinite(fullMin) ? fullMin * 0.8 : 0);
           for (const e of G.enemies) {
             if (e.dieDone) continue;
-            if (Math.abs(e.x - P.x) < worldW / 2 + 60 && Math.abs(e.y - P.y) < worldH / 2 + 60) hitEnemy(e, DATA.CFG.drops.fireworkDmg, 0, 0, { noKb: true });
+            if (Math.abs(e.x - P.x) < worldW / 2 + 60 && Math.abs(e.y - P.y) < worldH / 2 + 60) hitEnemy(e, fdmg, 0, 0, { noKb: true });
           }
         } else if (p.kind === 'vacuum') {
           Sfx.sfx.vacuum();
@@ -9542,14 +10108,24 @@ const MUI = (() => {
      杂兵数量另乘轮间乘数 G.countMul = ×2^(轮次-1)（只作用杂兵，boss/精英/事件不受影响）。 */
   // 杂兵同屏上限：轮内成长曲线 × 轮间数量乘数，钳在性能硬顶内
   function trashCap() {
-    return Math.min(DATA.CFG.growth.countHardMax || 480, DATA.aliveCap(G.roundTime) * (G.countMul || 1));
+    const Gw = DATA.CFG.growth;
+    return Math.min(Gw.screenCap || Gw.countHardMax || 480, DATA.aliveCap(G.roundTime) * (G.countMul || 1));
+  }
+  // 意见6：性能保护滞回——同屏到顶（screenCap）停刷，打到回落阈值（capResume）以下才继续刷
+  function updateSpawnHold(cap) {
+    const resume = DATA.CFG.growth.capResume || 100;
+    if (!G.spawnHold && G.enemies.length >= cap) G.spawnHold = true;
+    else if (G.spawnHold && G.enemies.length < resume) G.spawnHold = false;
+    return G.spawnHold;
   }
   function updateSpawner(dt) {
     const R = DATA.ROUNDS, M = G.roundMods;
     G.spawnT -= dt;
     const cap = trashCap();
+    const hold = updateSpawnHold(cap);
     if (G.spawnT <= 0) {
       G.spawnT = DATA.spawnEvery(G.roundTime) * (M ? M.spawn : 1);
+      if (hold) return; // 上限滞回中：本拍不刷（计时照走，回落到阈值后自然恢复）
       const batchN = Math.min(DATA.CFG.growth.countBatchPerTick || 64, DATA.spawnBatch(G.roundTime) * (G.countMul || 1));
       const mix = DATA.mixAt(G.waveT + (M ? M.mixMin : 0) * 60); // 波次表起点随轮次后移
       const types = [];
@@ -9647,12 +10223,25 @@ const MUI = (() => {
       date: new Date()
     };
   }
+  /* ================= 🏆 云端排行榜（js/leaderboard.js：微信小游戏/网页双端互通一张榜） =================
+     云开发未配置时 LB 内部自动跳过；任何异常都被吞掉，绝不影响结算流程 */
+  function submitRunToLb(data) {
+    try {
+      LB.submitRun({
+        round: data.round, time: data.time, kills: data.kills, lv: data.lv, gold: data.gold,
+        win: !!data.win, mother: !!data.mother, map: G.mapId, sp: gameSpeed
+      }).then(r => showLbRank(r && r.rank)).catch(() => {});
+    } catch (e) { /* noop */ }
+  }
+  function showLbRank(rank) { if (rank && MUI.setLbLine) MUI.setLbLine('🏆 恭喜上榜：云端第 ' + rank + ' 名！'); }
+
   function showResult(win) {
     G.state = 'over';
     const data = collectResult(win);
     const b = saveBest();
     data.best = b;
     showResultPanel(data);
+    submitRunToLb(data);
     if (win) { Sfx.sfx.victory(); Sfx.meow('happy'); }
   }
   function gameOver() { showResult(false); }
@@ -9865,7 +10454,8 @@ const MUI = (() => {
     for (const g of G.gems) {
       const sx = w2sx(g.x), sy = w2sy(g.y);
       if (sx < -halfW - cullP2 || sx > halfW + cullP2 || sy < -halfH - cullP2 || sy > halfH + cullP2) continue;
-      const tier = g.val >= 25 ? Art.items.gem3 : g.val >= 5 ? Art.items.gem2 : Art.items.gem1;
+      const T = DATA.CFG.drops.gemTiers; // 阈值唯一来源：配置表（v≥T[0].v 金 / v≥T[1].v 蓝 / 其余绿）
+      const tier = g.val >= T[0].v ? Art.items.gem3 : g.val >= (T[1] ? T[1].v : 0) ? Art.items.gem2 : Art.items.gem1;
       const bob = Math.sin(g.t * 4) * 3;
       ctx.drawImage(tier, sx - tier.width / 2, sy - tier.height / 2 + bob);
     }
@@ -9880,8 +10470,10 @@ const MUI = (() => {
     for (const c of G.chests) {
       const sx = w2sx(c.x), sy = w2sy(c.y);
       const bob = Math.sin(c.t * 3) * 4;
-      ctx.drawImage(Art.glows.chest, sx - 70, sy - 70 + bob, 140, 140);
-      ctx.drawImage(Art.items.chestClosed, sx - 36, sy - 30 + bob);
+      // 宝箱 3x 后光圈与居中都跟随精灵实际尺寸（旧 -36/-30 是按 canvas 版 72x60 写死的）
+      ctx.drawImage(Art.glows.chest, sx - 80, sy - 80 + bob, 160, 160);
+      const cs = Art.items.chestClosed;
+      ctx.drawImage(cs, sx - cs.width / 2, sy - cs.height / 2 + bob);
     }
     // ---- 实体（y 排序） ----
     const drawList = [];
@@ -10109,7 +10701,61 @@ const MUI = (() => {
     MUI.draw(ctx, G.realTime);
   }
 
+  // 老鼠妈妈的老巢（意见10）：手绘怪房子，可破坏地标；捣毁后呈废墟（残骸仍挡路）
+  function drawHouse(e, sx, sy) {
+    const W = 120;
+    ctx.save();
+    ctx.globalAlpha = 0.25; ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.ellipse(sx, sy + 32, 62, 15, 0, 0, TAU); ctx.fill();
+    ctx.globalAlpha = 1;
+    if (!e.ruined) {
+      const bw = 96, bh = 52, bx = sx - bw / 2, by = sy + 26 - bh; // 墙体
+      ctx.fillStyle = e.flash > 0 ? '#e8d9c4' : '#8a6f4d';
+      Art.rr(ctx, bx, by, bw, bh, 6); ctx.fill();
+      ctx.lineWidth = 3; ctx.strokeStyle = '#4a3b2a'; Art.rr(ctx, bx, by, bw, bh, 6); ctx.stroke();
+      ctx.strokeStyle = 'rgba(74,59,42,.45)'; ctx.lineWidth = 1.5; // 木板纹
+      for (let i = 1; i < 4; i++) { ctx.beginPath(); ctx.moveTo(bx + 4, by + i * bh / 4); ctx.lineTo(bx + bw - 4, by + i * bh / 4); ctx.stroke(); }
+      ctx.strokeStyle = '#3a2d1e'; ctx.lineWidth = 2.5; // 抓痕（老鼠妈妈的爪功）
+      for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.moveTo(bx + 14 + i * 9, by + 12); ctx.lineTo(bx + 8 + i * 9, by + 34); ctx.stroke(); }
+      ctx.fillStyle = '#241a10'; // 门洞（鼠洞）
+      ctx.beginPath(); ctx.arc(sx + 22, sy + 26, 13, Math.PI, 0); ctx.lineTo(sx + 35, sy + 26); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#ffd34d'; // 暖光小窗
+      Art.rr(ctx, bx + 60, by + 12, 22, 18, 4); ctx.fill();
+      ctx.strokeStyle = '#4a3b2a'; ctx.lineWidth = 2.5; Art.rr(ctx, bx + 60, by + 12, 22, 18, 4); ctx.stroke();
+      ctx.fillStyle = e.flash > 0 ? '#f0b7bc' : '#a8494f'; // 屋顶
+      ctx.beginPath();
+      ctx.moveTo(sx - W / 2 - 8, by); ctx.lineTo(sx, by - 44); ctx.lineTo(sx + W / 2 + 8, by);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = '#5f272b'; ctx.lineWidth = 3; ctx.stroke();
+      ctx.strokeStyle = '#d98a8f';
+      ctx.beginPath(); ctx.moveTo(sx - 26, by - 33); ctx.lineTo(sx + 26, by - 33); ctx.stroke();
+    } else {
+      ctx.fillStyle = '#6b573c'; // 塌落的断墙
+      ctx.beginPath(); ctx.moveTo(sx - 54, sy + 30); ctx.lineTo(sx - 30, sy - 14); ctx.lineTo(sx - 4, sy + 30); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#8a6f4d';
+      ctx.beginPath(); ctx.moveTo(sx + 2, sy + 30); ctx.lineTo(sx + 34, sy - 6); ctx.lineTo(sx + 56, sy + 30); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#a8494f'; // 掉落的半片屋顶
+      ctx.beginPath(); ctx.moveTo(sx - 44, sy + 2); ctx.lineTo(sx - 16, sy - 26); ctx.lineTo(sx + 2, sy + 2); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = '#4a3b2a'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(sx - 20, sy + 18); ctx.lineTo(sx + 14, sy + 30); ctx.stroke();
+      ctx.fillStyle = '#4a3b2a'; // 碎屑
+      for (const [dx, dy, r2] of [[-40, 28, 4], [18, 26, 3], [40, 24, 5], [-6, 30, 3]]) {
+        ctx.beginPath(); ctx.arc(sx + dx, sy + dy, r2, 0, TAU); ctx.fill();
+      }
+    }
+    ctx.restore();
+    if (!e.ruined) { // 血条：满血也常驻显示，方便远距离发现老巢
+      const w2 = 96, barY = sy - 74;
+      ctx.save();
+      ctx.fillStyle = 'rgba(20,12,34,.6)';
+      Art.rr(ctx, sx - w2 / 2, barY, w2, 9, 4.5); ctx.fill();
+      ctx.fillStyle = '#c48ef5';
+      Art.rr(ctx, sx - w2 / 2 + 1.5, barY + 1.5, Math.max(3, (w2 - 3) * Math.max(0, e.hp / e.maxHp)), 6, 3); ctx.fill();
+      ctx.restore();
+    }
+  }
   function drawEnemy(e) {
+    if (e.house) { drawHouse(e, w2sx(e.x), w2sy(e.y)); return; }
     const set = Art.E[e.type];
     const white = Art.EW[e.type];
     const blinkSpr = Art.EB[e.type] ? Art.EB[e.type][0] : null;
@@ -10294,20 +10940,22 @@ const MUI = (() => {
     if (inBossFight && Math.floor(G.time * 3) % 2 === 0) ctx.fillStyle = '#ffd34d';
     ctx.fillText(tstr, vw / 2, 40);
     ctx.restore();
-    // 击杀 & 金币（图标 + 数字）
+    // 击杀 & 金币（图标 + 数字）：数字右对齐向左生长，图标按实测文本宽度排在数字左侧，大数字不再重叠（意见9）
     ctx.save();
     ctx.font = '700 18px "Fusion Pixel","ZCOOL KuaiLe","Microsoft YaHei",sans-serif';
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(20,14,40,.85)';
-    ctx.strokeText('' + G.kills, vw - 66, 30);
+    const kStr = '' + G.kills, gStr = '' + G.gold;
+    ctx.strokeText(kStr, vw - 66, 30);
     ctx.fillStyle = '#ffe9c4';
-    ctx.fillText('' + G.kills, vw - 66, 30);
-    ctx.strokeText('' + G.gold, vw - 66, 62);
+    ctx.fillText(kStr, vw - 66, 30);
+    ctx.strokeText(gStr, vw - 66, 62);
     ctx.fillStyle = '#ffd34d';
-    ctx.fillText('' + G.gold, vw - 66, 62);
+    ctx.fillText(gStr, vw - 66, 62);
+    const kTw = ctx.measureText(kStr).width, gTw = ctx.measureText(gStr).width;
     ctx.textAlign = 'center';
-    ctx.drawImage(Art.icons.paw, vw - 100 - 11, 19, 22, 22);
-    ctx.drawImage(Art.items.coin, vw - 100 - 11, 51, 22, 22);
+    ctx.drawImage(Art.icons.paw, vw - 66 - kTw - 8 - 22, 19, 22, 22);
+    ctx.drawImage(Art.items.coin, vw - 66 - gTw - 8 - 22, 51, 22, 22);
     // 轮次 / 批次指示
     const R2 = DATA.ROUNDS;
     const batchTxt = G.batch >= R2.batchCount ? '轮Boss战！' : '批次 ' + (G.batch + 1) + '/' + R2.batchCount;
@@ -10584,7 +11232,7 @@ const MUI = (() => {
       title, sub,
       motherLine: data.mother ? '⏱ 讨伐用时 ' + U.fmtTime(data.motherTTK || 0) : '',
       stats, buildRows, bestTxt, continueOffer: !!data.continueOffer,
-      contentH: 300 + buildRows.length * 54 + stats.length * 30
+      contentH: 330 + buildRows.length * 54 + stats.length * 30
     });
   }
   // 小游戏版：保存战报（wx 存相册；浏览器测试桩回退成下载）
@@ -10638,6 +11286,11 @@ const MUI = (() => {
       getMap: () => G.mapId,
       showHelp: () => { Sfx.ensure(); Sfx.sfx.click(); MUI.setScreen('help'); },
       showLog: () => { Sfx.ensure(); Sfx.sfx.click(); MUI.setScreen('log'); },
+      showLb: () => { Sfx.ensure(); Sfx.sfx.click(); LB.refresh(); MUI.openLb(); },
+      lbSnapshot: () => LB.snapshot(),
+      lbRefresh: () => { Sfx.sfx.click(); LB.refresh(true); },
+      lbRename: () => { Sfx.sfx.click(); LB.cycleName(); },
+      lbMapTag: id => { try { const m = MAPS.get(id); return m && m.meta ? m.meta.emoji : ''; } catch (e) { return ''; } },
       closeOverlay: () => {
         Sfx.sfx.click();
         if (MUI.screen === 'log') { const l = latestLogEntry(); if (l) U.storage.set('meow_log_seen', l.version); }
@@ -10725,7 +11378,7 @@ const MUI = (() => {
     ctx.fillStyle = 'rgba(255,255,255,.8)';
     ctx.fillText('shake ' + G.shake.toFixed(1) + '  zones ' + G.zones.length + '  parts ' + G.parts.length +
       '  projs ' + G.projs.length + '  dmgs ' + G.dmgs.length + '  enemies ' + G.enemies.length +
-      '  waveT ' + Math.round(G.waveT) + '  sfx/s ' + Sfx.sfxRate(), 8, vh - 8);
+      '  waveT ' + Math.round(G.waveT) + '  warp ' + G.warps + '  sfx/s ' + Sfx.sfxRate(), 8, vh - 8);
   }
   function updateFx(dt) {
     for (const p of G.parts) { p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt; if (p.grav) p.vy += p.grav * dt; }
@@ -10793,6 +11446,7 @@ const MUI = (() => {
 
   updateToggleBtns(); // MUI HUD 就位后，广播一次当前缩放/加速档
   if (DEV) window.__MS = { G, calcMods, DATA, getMods: () => mods, buildPool, hitEnemy, spawnEnemy,
+    updateStuck, warpStuckPoint, getCurMap: () => curMap,
     getZoom: () => ({ userZoom, zoom, worldW, worldH }), getSpeed: () => gameSpeed, addXp, openChest, MUI };
   const startLoop = () => requestAnimationFrame(loop);
   if (window.__PIXEL_GATE) window.__PIXEL_GATE.then(startLoop); else startLoop();

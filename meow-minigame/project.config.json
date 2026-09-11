@@ -1,5 +1,6 @@
 {
   "description": "喵都幸存者 微信小游戏版（H5 本体 + 适配层）",
+  "cloudfunctionRoot": "cloudfunctions/",
   "packOptions": {
     "ignore": [
       {
@@ -16,6 +17,10 @@
       },
       {
         "value": "game-js",
+        "type": "folder"
+      },
+      {
+        "value": "cloudfunctions",
         "type": "folder"
       },
       {

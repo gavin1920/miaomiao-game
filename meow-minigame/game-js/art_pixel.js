@@ -6,7 +6,6 @@
  */
 (function () {
   'use strict';
-  if (typeof Art === 'undefined') { __setDocTitle('AP:no Art'); return; }
 
   const MANIFEST_URL = 'pixel-assets/manifest.json';
 
@@ -39,13 +38,10 @@
     im.src = src;
   });
 
-  __setDocTitle('AP:fetching');
   const manifestPromise = window.PIXEL_MANIFEST
     ? Promise.resolve(window.PIXEL_MANIFEST)
     : fetch(MANIFEST_URL).then((r) => r.json());
   manifestPromise.then(async (M) => {
-    __setDocTitle('AP:stage-manifest');
-    __setDocTitle('AP:manifest-ok');
     const cache = {};
     const get = async (p) => (cache[p] || (cache[p] = await load('pixel-assets/' + p)));
 
@@ -78,7 +74,6 @@
     Art.menuCat = [menu1, menu2];
     Art.playerWhite = whiteOf(idle[0]);
 
-    __setDocTitle('AP:stage-player-done');
     /* ---- 敌人 ---- */
     for (const [type, def] of Object.entries(M.enemies)) {
       const scale = def.scale;
@@ -96,14 +91,18 @@
     /* ---- 弹幕 ---- */
     Art.projs = Art.projs || {};
     for (const [k, paths] of Object.entries(M.projs || {})) {
-      if (Array.isArray(paths)) Art.projs[k] = await Promise.all(paths.map((p) => frame(p, 2)));
+      if (Array.isArray(paths)) { const fr = await Promise.all(paths.map((p) => frame(p, 2))); Art.projs[k] = fr.length === 1 ? fr[0] : fr; }
       else Art.projs[k] = await frame(paths, 2);
     }
     if (M.slash) Art.slash = await frame(M.slash, 2);
 
     /* ---- 道具/图标 ---- */
     Art.items = Art.items || {};
-    for (const [k, p] of Object.entries(M.items || {})) Art.items[k] = await frame(p, 2);
+    // 地面掉落显示倍率：经验小鱼干维持 2x；金币/牛奶/烟花/磁铁是高价值道具，
+    // 真机小屏（1X 视野优先）下 2x 太小看不清，统一 3x（20260911 试玩反馈）；
+    // 宝箱是最稀有奖励，3x 保持「宝箱 > 一切散落道具」的视觉层级（开箱演出按显式尺寸绘制，不受影响）
+    const ITEM_SCALE = { coin: 3, milk: 3, firework: 3, vacuum: 3, chestClosed: 3, chestOpen: 3 };
+    for (const [k, p] of Object.entries(M.items || {})) Art.items[k] = await frame(p, ITEM_SCALE[k] || 2);
     Art.icons = Art.icons || {};
     for (const [k, p] of Object.entries(M.icons || {})) Art.icons[k] = await frame(p, 2);
     const pawFallback = await (async () => { const p = M.icons && M.icons.paw ? await get(M.icons.paw) : null; return p ? bake(p, 2) : canvas2(112, 112); })();
@@ -117,7 +116,6 @@
     /* ---- 王冠（精英） ---- */
     if (M.eliteCrown) Art.eliteCrown = await frame(M.eliteCrown, 2);
 
-    __setDocTitle('AP:stage-before-sky moon=' + (M.sky ? 'hasSky' : 'noSky'));
     /* ---- 像素天空（月/云/天际线） ---- */
     if (M.sky) {
       Art.sky = Art.sky || {};
@@ -128,20 +126,18 @@
     }
 
     /* ---- 全局：像素渲染 ---- */
-    const cv = document.getElementById('game');
+    const cv = null;
     if (cv) {
       const ctx = cv.getContext('2d');
       const noSmooth = () => { ctx.imageSmoothingEnabled = false; };
       noSmooth();
-      ;
+      
       window.addEventListener('resize', noSmooth);
     }
-    __setDocTitle('喵都幸存者 Meow Survivors');
-    __PIXEL_GATE_RESOLVE();;
+    __PIXEL_GATE_RESOLVE();
   }).catch((err) => {
     /* 兜底:file:// 下 fetch 会被浏览器拦下,或素材缺失——回退原版矢量美术,游戏照常开局 */
     console.error('[art_pixel] 素材加载失败，回退原版矢量美术：', err);
-    __setDocTitle('喵都幸存者 Meow Survivors');
-    __PIXEL_GATE_RESOLVE();;
+    __PIXEL_GATE_RESOLVE();
   });
 })();

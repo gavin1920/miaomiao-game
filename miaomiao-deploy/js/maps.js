@@ -1432,6 +1432,75 @@ const MAPS = (() => {
       if (dy) { const ny = a.y + dy; if (this.free(a.x, ny, isCat, r)) a.y = ny; }
     }
     speedAt(x, y) { return this.code(x, y) === T.SLOW ? (this.meta.slowMul || 0.55) : 1; }
+    /* ---- 玩家流场寻路（v18）：以玩家为源的窗口 BFS，怪物读场内梯度绕墙走向玩家 ----
+       窗口默认 ±80 格（1600px）；可走 = 非 BLOCK 且非 CAT（猫道对怪物是墙）。
+       rebuild 0 分配（TypedArray 复用），整场 BFS ~2.6 万格 <1ms，0.35s 一轮。 */
+    buildFlow(px, py, halfCells) {
+      const gw = this.gw, gh = this.gh, grid = this.grid;
+      const cgx = Math.min(gw - 1, Math.max(0, (px / CELL) | 0));
+      const cgy = Math.min(gh - 1, Math.max(0, (py / CELL) | 0));
+      const x0 = Math.max(0, cgx - halfCells), y0 = Math.max(0, cgy - halfCells);
+      const x1 = Math.min(gw - 1, cgx + halfCells), y1 = Math.min(gh - 1, cgy + halfCells);
+      const w = x1 - x0 + 1, h = y1 - y0 + 1, n = w * h;
+      if (!this.flowDist || this.flowDist.length < n) {
+        this.flowDist = new Int32Array(n);
+        this.flowQ = new Int32Array(n);
+      }
+      const dist = this.flowDist, q = this.flowQ;
+      for (let i = 0; i < n; i++) dist[i] = 0;
+      const walk = (gx, gy) => {
+        const t = grid[gy * gw + gx];
+        return t !== T.BLOCK && t !== T.CAT;
+      };
+      let sx = cgx, sy = cgy; // 源=玩家格；被墙盖住（罕见）就找最近可走格
+      if (!walk(sx, sy)) {
+        let found = false;
+        for (let r = 1; r <= 6 && !found; r++) {
+          for (let dy = -r; dy <= r && !found; dy++) for (let dx = -r; dx <= r && !found; dx++) {
+            const gx = cgx + dx, gy = cgy + dy;
+            if (gx < x0 || gx > x1 || gy < y0 || gy > y1) continue;
+            if (walk(gx, gy)) { sx = gx; sy = gy; found = true; }
+          }
+        }
+        if (!found) { this.flowReady = false; return; }
+      }
+      let head = 0, tail = 0;
+      dist[(sy - y0) * w + (sx - x0)] = 1;
+      q[tail++] = (sy - y0) * w + (sx - x0);
+      while (head < tail) { // 4 邻接 BFS（不对角穿缝）
+        const cur = q[head++];
+        const cd = dist[cur];
+        const cx = cur % w, cy = (cur / w) | 0;
+        const gx = x0 + cx, gy = y0 + cy;
+        if (cx > 0 && dist[cur - 1] === 0 && walk(gx - 1, gy)) { dist[cur - 1] = cd + 1; q[tail++] = cur - 1; }
+        if (cx < w - 1 && dist[cur + 1] === 0 && walk(gx + 1, gy)) { dist[cur + 1] = cd + 1; q[tail++] = cur + 1; }
+        if (cy > 0 && dist[cur - w] === 0 && walk(gx, gy - 1)) { dist[cur - w] = cd + 1; q[tail++] = cur - w; }
+        if (cy < h - 1 && dist[cur + w] === 0 && walk(gx, gy + 1)) { dist[cur + w] = cd + 1; q[tail++] = cur + w; }
+      }
+      this.flowW = w; this.flowH = h; this.flowX0 = x0; this.flowY0 = y0;
+      this.flowReady = true;
+    }
+    flowDir(x, y, out) { // out=[dx,dy]：8 邻中距离场最小者方向；不在场内/无路 → false
+      if (!this.flowReady) return false;
+      const gx = (x / CELL) | 0, gy = (y / CELL) | 0;
+      const cx = gx - this.flowX0, cy = gy - this.flowY0;
+      if (cx < 0 || cy < 0 || cx >= this.flowW || cy >= this.flowH) return false;
+      const w = this.flowW, dist = this.flowDist;
+      const cur = dist[cy * w + cx];
+      if (cur <= 0) return false;
+      let bd = cur, bx = 0, by = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const nx = cx + dx, ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= this.flowW || ny >= this.flowH) continue;
+        const d2 = dist[ny * w + nx];
+        if (d2 > 0 && d2 < bd) { bd = d2; bx = dx; by = dy; }
+      }
+      if (!bx && !by) return false; // 已在玩家格/局部最低点：保持原方向
+      const l = Math.hypot(bx, by);
+      out[0] = bx / l; out[1] = by / l;
+      return true;
+    }
     nearWalk(x, y, isCat, maxR) {
       maxR = maxR || 640;
       x = U.clamp(x, 24, this.w - 24); y = U.clamp(y, 24, this.h - 24);
@@ -1446,6 +1515,41 @@ const MAPS = (() => {
         }
       }
       return { x, y };
+    }
+    /* ---- 老鼠妈妈的老巢（意见10）：确定性扫描四条边带盖一座怪房子 ----
+       占地 6×4 格（120×80px）实心阻挡（杂兵/主角绕行、流场绕导、鸽子视线被挡），
+       落点要求：占地与外圈一格都不压墙/猫道（保证四面可绕行不堵路）、离出生点 ≥600px。
+       扫到即定（同一张图每次进房位置固定）；全图都放不下就放弃（houseSpot 为空，不盖）。 */
+    placeMotherHouse() {
+      const CW = 6, CH = 4;
+      const ok = (gx, gy) => {
+        if (gx < 2 || gy < 2 || gx + CW > this.gw - 2 || gy + CH > this.gh - 2) return false;
+        const cx = (gx + CW / 2) * CELL, cy = (gy + CH / 2) * CELL;
+        if (this.start && Math.hypot(cx - this.start.x, cy - this.start.y) < 600) return false;
+        for (let y = gy - 1; y <= gy + CH; y++) for (let x = gx - 1; x <= gx + CW; x++) {
+          const t = this.grid[y * this.gw + x];
+          if (t === T.BLOCK || t === T.CAT) return false;
+        }
+        return true;
+      };
+      const trySpot = (gx, gy) => {
+        if (!ok(gx, gy)) return false;
+        this.fill('walk', gx * CELL - 14, gy * CELL - 14, CW * CELL + 28, CH * CELL + 28); // 房基垫层
+        this.stamp(gx * CELL, gy * CELL, CW * CELL, CH * CELL, T.BLOCK);
+        this.houseSpot = { x: (gx + CW / 2) * CELL, y: (gy + CH / 2) * CELL, w: CW * CELL, h: CH * CELL };
+        return true;
+      };
+      const band = [6, 7, 8, 9, 10, 11, 12]; // 距边界 120~240px：够"边缘"又不贴死边界墙
+      const mx0 = (this.gw * 0.2) | 0, mx1 = (this.gw * 0.8) | 0;
+      const my0 = (this.gh * 0.2) | 0, my1 = (this.gh * 0.8) | 0;
+      const sides = [
+        b => { for (let gx = mx0; gx <= mx1 - CW; gx++) if (trySpot(gx, b)) return true; return false; },
+        b => { for (let gx = mx1 - CW; gx >= mx0; gx--) if (trySpot(gx, this.gh - b - CH)) return true; return false; },
+        b => { for (let gy = my0; gy <= my1 - CH; gy++) if (trySpot(b, gy)) return true; return false; },
+        b => { for (let gy = my1 - CH; gy >= my0; gy--) if (trySpot(this.gw - b - CW, gy)) return true; return false; }
+      ];
+      const off = (U.hash2(this.w | 0, this.h | 0, 91) * 4) | 0; // 各图起始边错开，别都挤在同一边
+      for (const b of band) for (let s = 0; s < 4; s++) if (sides[(off + s) % 4](b)) return;
     }
     /* ---- 渲染 ---- */
     tile(tx, ty) {
@@ -2797,6 +2901,8 @@ const MAPS = (() => {
 
 
   const list = [oldtown(), sakura(), harbor(), onsen(), carnival()];
+  // 意见10：每张手工地图边缘盖一座「老鼠妈妈的老巢」（确定性选点，捣毁后妈妈提前降临）
+  for (const m of list) m.placeMotherHouse();
   // 经典「无尽街区」伪地图：curMap = null 时走旧的无限 chunk 逻辑
   const endless = {
     id: 'endless', endless: true,

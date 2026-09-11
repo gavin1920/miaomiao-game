@@ -96,25 +96,33 @@ rep("""  const endTouch = e => {
 
 # ⑨ KeyM 静音：网页版已重构为 toggleMuted() 单一真源（无 DOM 依赖），fork 原样保留，无需替换
 
-# ⑩ 老鼠妈妈结算
+# ⑩ 老鼠妈妈结算（🏆 submitRunToLb：云端排行榜提交，LB 未配置/失败时内部静默跳过，两端共用）
 rep("""    data.best = saveBest();
     Result.open(data);
+    submitRunToLb(data);
     Sfx.sfx.victory(); Sfx.meow('happy');
     show(screens.over, true);""",
 """    data.best = saveBest();
     showResultPanel(data);
+    submitRunToLb(data);
     Sfx.sfx.victory(); Sfx.meow('happy');""", 'mother-result')
 
 # ⑪ 普通结算
 rep("""    const b = saveBest();
     data.best = b;
     Result.open(data);
+    submitRunToLb(data);
     if (win) { Sfx.sfx.victory(); Sfx.meow('happy'); }
     show(screens.over, true);""",
 """    const b = saveBest();
     data.best = b;
     showResultPanel(data);
+    submitRunToLb(data);
     if (win) { Sfx.sfx.victory(); Sfx.meow('happy'); }""", 'show-result')
+
+# ⑪.5 排行榜名次回执：H5 写 DOM（#lb-rank-line），小游戏改走 MUI 结算面板追加一行
+rep("  function showLbRank(rank) { if (rank && Result.showLbRank) Result.showLbRank(rank); }",
+    "  function showLbRank(rank) { if (rank && MUI.setLbLine) MUI.setLbLine('🏆 恭喜上榜：云端第 ' + rank + ' 名！'); }", 'lb-rank-line')
 
 # ⑫ updateBestLine → 结算展示/战报保存/日志帮助数据
 rep("""  function updateBestLine() {
@@ -151,7 +159,7 @@ rep("""  function updateBestLine() {
       title, sub,
       motherLine: data.mother ? '⏱ 讨伐用时 ' + U.fmtTime(data.motherTTK || 0) : '',
       stats, buildRows, bestTxt, continueOffer: !!data.continueOffer,
-      contentH: 300 + buildRows.length * 54 + stats.length * 30
+      contentH: 330 + buildRows.length * 54 + stats.length * 30
     });
   }
   // 小游戏版：保存战报（wx 存相册；浏览器测试桩回退成下载）
@@ -422,6 +430,11 @@ splice("""  $('btn-start').addEventListener('click', startRun);""",
       getMap: () => G.mapId,
       showHelp: () => { Sfx.ensure(); Sfx.sfx.click(); MUI.setScreen('help'); },
       showLog: () => { Sfx.ensure(); Sfx.sfx.click(); MUI.setScreen('log'); },
+      showLb: () => { Sfx.ensure(); Sfx.sfx.click(); LB.refresh(); MUI.openLb(); },
+      lbSnapshot: () => LB.snapshot(),
+      lbRefresh: () => { Sfx.sfx.click(); LB.refresh(true); },
+      lbRename: () => { Sfx.sfx.click(); LB.cycleName(); },
+      lbMapTag: id => { try { const m = MAPS.get(id); return m && m.meta ? m.meta.emoji : ''; } catch (e) { return ''; } },
       closeOverlay: () => {
         Sfx.sfx.click();
         if (MUI.screen === 'log') { const l = latestLogEntry(); if (l) U.storage.set('meow_log_seen', l.version); }
@@ -517,9 +530,11 @@ rep("""  updateBestLine();
   $('btn-cfg').addEventListener('click', openCfg);
   $('btn-cfg-pause').addEventListener('click', openCfg);
   if (DEV) window.__MS = { G, calcMods, DATA, getMods: () => mods, buildPool, hitEnemy, spawnEnemy,
+    updateStuck, warpStuckPoint, getCurMap: () => curMap,
     getZoom: () => ({ userZoom, zoom, worldW, worldH }), getSpeed: () => gameSpeed };""",
 """  updateToggleBtns(); // MUI HUD 就位后，广播一次当前缩放/加速档
   if (DEV) window.__MS = { G, calcMods, DATA, getMods: () => mods, buildPool, hitEnemy, spawnEnemy,
+    updateStuck, warpStuckPoint, getCurMap: () => curMap,
     getZoom: () => ({ userZoom, zoom, worldW, worldH }), getSpeed: () => gameSpeed, addXp, openChest, MUI };""", 'init-tail')
 
 # ㉓ AUTO 自动化块删除（保留与 H5 一致的像素字体启动门 __PIXEL_GATE：等像素素材就绪再开循环）
@@ -588,6 +603,12 @@ if fails:
     for f in fails:
         print('  -', f)
     sys.exit(1)
+
+# ㉞ 重力感应：倾斜手机 → 角色移动（不触摸时生效，与摇杆共存；__TILT 由 adapter 加速计回调更新）
+rep("    if (joy.on) { ix = joy.x; iy = joy.y; }",
+    "    if (joy.on) { ix = joy.x; iy = joy.y; }\n"
+    "    else if (typeof __TILT !== 'undefined' && (__TILT.x || __TILT.y)) { ix = __TILT.x; iy = __TILT.y; }",
+    'tilt-input')
 
 # 残留 DOM 检查 v3：函数上下文追踪 + 定点豁免 + 非豁免命中即阻断（写入前拦截）。
 # 豁免两类：① 桩安全模式 document.createElement('canvas') / document.addEventListener(

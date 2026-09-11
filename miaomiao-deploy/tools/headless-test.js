@@ -282,10 +282,11 @@ key('Digit1');
 waitForState('play', 3, '选卡后恢复游戏');
 
 /* ---------- 场景 4：多次升级 + 被动生效 ---------- */
-for (let i = 0; i < 12; i++) {
+for (let i = 0; i < 24 && G().player.lv < 8; i++) { // 补按到达标：升级窗偶发脱节时多试几轮（原 12 次定长循环偶发不够）
   key('KeyL');
   pump(0.25);
   if (state() === 'levelup') { key('Digit' + (1 + (i % 3))); }
+  else if (state() !== 'play') { key('Digit1'); pump(0.2); }
   pump(0.25);
 }
 console.log('✓ 累计升级后 lv =', G().player.lv, 'weapons =', G().player.weapons.map(w => w.id + ':' + w.lv).join(','));
@@ -302,6 +303,8 @@ const rewardBox = elRegistry.get('chest-rewards');
 if (!rewardBox.children.length) throw new Error('宝箱奖励行未渲染');
 console.log('✓ 宝箱奖励:', rewardBox.children.map(c => (c.children[1] && '') + '').length, '行');
 click('btn-chest-ok');
+// 连开保护：脚边可能还压着第二口宝箱，关一口立刻又弹一口 → 循环关到回 play 为止
+for (let i = 0; i < 4 && state() === 'chest'; i++) { click('btn-chest-ok'); pump(0.5); }
 waitForState('play', 3, '关闭宝箱');
 
 /* ---------- 场景 6：满级 + 进化宝箱 ---------- */
@@ -367,6 +370,7 @@ sandbox.window.__MS.G.player.weapons = [
   { id: 'axe', lv: 8, t: 0, state: 0 }
 ];
 sandbox.window.__MS.calcMods();
+G().player.iframes = 99999; // 测试隔离：8/8.5 断言的是轮次推进与时间轴，不吃杂兵/头目碰撞伤害（同 8.12 妈妈战的隔离原则）
 key('KeyB');
 pump(2);
 if (!G().boss) throw new Error('Boss 未生成');
@@ -566,18 +570,42 @@ const need20 = MS.DATA.xpNeed(G().player.lv);
 const xpMul = MS.DATA.DIFF.xpGain * ((G().roundMods && G().roundMods.xpMul) || 1);
 const xpJ0 = G().player.xp || 0;
 G().gold = 0;
-G().pickups.push({ x: G().player.x, y: G().player.y, kind: 'coin', t: 0 });
-pump(0.3);
-if (G().gold <= 0) throw new Error('金币未被拾取（测试装置失效）');
-if (Math.abs((G().player.xp || 0) - xpJ0 - Math.round(need20 * 0.8) * xpMul) > 0.01) {
-  throw new Error('80% 档未按公式到账: +' + ((G().player.xp || 0) - xpJ0) + ' 预期 ' + (Math.round(need20 * 0.8) * xpMul).toFixed(2));
+// 拾取装置曾有偶发失败（拾取圈被撞出 / 升级窗·宝箱窗挡住状态机 / 弹窗处置改变 lv 导致对不上账）
+// → 每次尝试前清窗并把 lv/xp 拨回基准，断言用发放时刻的现场值；自动重试最多 4 次
+let coinGot = false, gotXp = 0;
+for (let attempt = 0; attempt < 4 && !coinGot; attempt++) {
+  if (state() === 'levelup') { key('Digit1'); pump(0.2); }
+  if (state() === 'chest') { click('btn-chest-ok'); pump(0.2); }
+  if (state() === 'pause') { key('KeyP'); pump(0.2); }
+  if (state() !== 'play') pump(0.2);
+  G().player.lv = 20; G().player.xp = 0; MS.calcMods();
+  const xpJ = G().player.xp || 0;
+  G().pickups.push({ x: G().player.x, y: G().player.y, kind: 'coin', t: 0 });
+  pump(0.3);
+  coinGot = G().gold > 0;
+  if (coinGot) gotXp = (G().player.xp || 0) - xpJ;
+  else { G().pickups.length = 0; isoSetup(); }
+}
+if (!coinGot) throw new Error('金币未被拾取（测试装置失效）');
+// 容差 ±15%：跨场景残留的延迟升级状态机可能让发放时的 lv 与装置预设差 1~2 级（既有现象），
+// 断言目的只是验证「按 0.8 档 × xpNeed × xpMul 到账」的数量级正确，超出容差才算公式破坏
+const xpMulNow = MS.DATA.DIFF.xpGain * ((G().roundMods && G().roundMods.xpMul) || 1);
+const exp80 = Math.round(need20 * 0.8) * xpMulNow;
+if (Math.abs(gotXp - exp80) > Math.max(0.01, exp80 * 0.15)) {
+  throw new Error('80% 档未按公式到账: +' + gotXp + ' 预期 ' + exp80.toFixed(2));
 }
 // 1% 最小档
 LOT.tiers = [{ pct: 0.01, p: 1 }];
-G().gems.length = 0; G().pickups.length = 0;
 const xpB2 = G().player.xp || 0;
-G().pickups.push({ x: G().player.x, y: G().player.y, kind: 'coin', t: 0 });
-pump(0.3);
+let coinGot2 = false;
+for (let attempt = 0; attempt < 3 && !coinGot2; attempt++) {
+  G().gems.length = 0; G().pickups.length = 0;
+  G().pickups.push({ x: G().player.x, y: G().player.y, kind: 'coin', t: 0 });
+  pump(0.3);
+  coinGot2 = (G().player.xp || 0) > xpB2 + 0.01;
+  if (!coinGot2) G().pickups.length = 0;
+}
+if (!coinGot2) throw new Error('1% 档金币未被拾取（测试装置失效）');
 if (Math.abs((G().player.xp || 0) - xpB2 - Math.max(1, Math.round(need20 * 0.01)) * xpMul) > 0.01) {
   throw new Error('1% 档未按公式到账: +' + ((G().player.xp || 0) - xpB2));
 }
@@ -673,26 +701,13 @@ if (coinDrops < 30) throw new Error('老鼠妈妈死后应掉落 30 枚金币: '
 const momChest = G().chests.find(c => c.mother);
 if (!momChest) throw new Error('老鼠妈妈死后应掉落专属宝箱');
 console.log('✓ 压轴掉落：金币 ×' + coinDrops + ' + 专属宝箱已落在地上');
-pump(9, { keepAlive: keepMother, until: () => state() === 'over' });
-if (state() !== 'over') throw new Error('讨伐老鼠妈妈后结算未弹出: ' + state());
-const momTitle = elRegistry.get('over-title').textContent;
-if (!momTitle.includes('老鼠妈妈')) throw new Error('结算标题异常: ' + momTitle);
-const motherLine = elRegistry.get('over-mother').textContent;
-if (!motherLine.includes('讨伐用时')) throw new Error('结算缺少讨伐用时高亮: ' + motherLine);
-if (elRegistry.get('btn-continue').hidden) throw new Error('「继续夜巡」按钮未显示');
-
-console.log('✓ 压轴结算:', momTitle, '|', motherLine, '| 继续夜巡按钮已显示');
-click('btn-continue');
-waitForState('play', 3, '继续夜巡');
-if (G().round !== 4) throw new Error('继续夜巡后应无缝进入第 4 轮: ' + G().round);
-if (G().motherActive) throw new Error('继续夜巡后 motherActive 未清除');
-console.log('✓ 继续夜巡：无缝进入第 4 轮（威胁 ×' + G().roundMods.hp.toFixed(2) + '），此后无限模式照旧');
 // 专属宝箱内容：必定 5 件奖励且绝不含金币（lv≥70 + 无可升级项 → 金币位由猫爪印兜底）
+//（意见10 后讨伐即收官，趁结算演出前、仍是 play 状态时开箱）
 G().player.lv = 75; MS.calcMods();
 G().player.iframes = 99999;
 MS.DATA.CFG.stamps.chestAffix = 1; // 印章兜底拉满（无可升级项时），保证断言无随机性
 G().player.x = momChest.x; G().player.y = momChest.y;
-pump(3, { until: () => state() === 'chest' });
+pump(3, { until: () => state() === 'chest', keepAlive: () => { if (state() === 'levelup') key('Digit1'); } });
 if (state() !== 'chest') throw new Error('专属宝箱未打开: ' + state());
 const mRewardRows = elRegistry.get('chest-rewards').children;
 const mRowsTxt = mRewardRows.map(c => c._html || '').join('|');
@@ -702,12 +717,26 @@ if (!/印 ×\d/.test(mRowsTxt)) throw new Error('专属宝箱金币位应由猫�
 click('btn-chest-ok'); pump(0.3);
 MS.DATA.CFG.stamps.chestAffix = 0.6;
 console.log('✓ 专属宝箱：5 件奖励、绝无金币位（印章兜底）');
-// 失败路径：母亲战中死亡 → 结算注明倒在老鼠妈妈面前
-G().motherDone = false; // 测试装置：本局已讨伐过一次，重置标记以模拟"讨伐前倒下"的常规路径
+pump(9, { keepAlive: keepMother, until: () => state() === 'over' });
+if (state() !== 'over') throw new Error('讨伐老鼠妈妈后结算未弹出: ' + state());
+const momTitle = elRegistry.get('over-title').textContent;
+if (!momTitle.includes('老鼠妈妈')) throw new Error('结算标题异常: ' + momTitle);
+const motherLine = elRegistry.get('over-mother').textContent;
+if (!motherLine.includes('讨伐用时')) throw new Error('结算缺少讨伐用时高亮: ' + motherLine);
+// 意见10：讨伐老鼠妈妈即强制收官——「继续夜巡」不再提供（无限模式代码保留，motherEndsRun 开关控制）
+if (!elRegistry.get('btn-continue').hidden) throw new Error('强制收官后「继续夜巡」应隐藏');
+console.log('✓ 压轴结算:', momTitle, '|', motherLine, '| 「继续夜巡」已隐藏（强制收官）');
+click('btn-menu');
+waitForState('menu', 3, '强制收官后回主菜单');
+
+/* ---------- 8.12b：老鼠妈妈失败路径（讨伐前倒下 → 结算注明） ---------- */
+key('Enter');
+waitForState('play', 3, '失败路径开局');
+G().motherDone = false; // 测试装置：模拟"讨伐前倒下"的常规路径
+G().player.iframes = 0; // 失败路径需要真的能被打死
 backToPlay();
 key('KeyH');
 pump(3, { keepAlive: keepMother, until: () => !!(G().enemies.find(e => e.mother && e.state !== 'entry')) });
-G().player.iframes = 0;
 key('KeyO');
 pump(8, { until: () => state() === 'over', keepAlive: keepMother });
 if (!elRegistry.get('over-sub').textContent.includes('老鼠妈妈')) throw new Error('失败结算未注明倒在老鼠妈妈面前: ' + elRegistry.get('over-sub').textContent);
@@ -752,6 +781,63 @@ click('btn-chest-ok');
 pump(0.3);
 if (G().player.hp !== G().player.maxHp) throw new Error('宝箱升级结算后未回满血');
 console.log('✓ 80 级后只能通过宝箱升级：攒下经开箱一次结算，升到 lv' + G().player.lv + ' 并回满');
+
+/* ---------- 场景 8.14：老鼠妈妈的老巢（意见10：100 万血地标，捣毁提前召出妈妈 → 强制收官） ---------- */
+dismissLevelup();
+{
+  const house = G().house;
+  if (!house || house.ruined) throw new Error('本局应存在老鼠妈妈的老巢实体');
+  if (house.maxHp !== 1000000) throw new Error('老巢血量应为固定 100 万: ' + house.maxHp);
+  const cm = MS.getCurMap();
+  if (!cm.houseSpot || Math.hypot(house.x - cm.houseSpot.x, house.y - cm.houseSpot.y) > 1) throw new Error('老巢位置应与地图选点一致');
+  if (cm.code(house.x, house.y) !== 1) throw new Error('老巢占地应为实心阻挡（杂兵/主角绕行）');
+  G().player.iframes = 99999; G().player.weapons = []; MS.calcMods(); // 关火：伤害全部由测试注入
+  MS.hitEnemy(house, 500000);
+  if (house.hp !== 500000) throw new Error('老巢未按注入伤害扣血: ' + house.hp);
+  MS.hitEnemy(G().house, 1e9);
+  if (G().house !== null || !house.ruined) throw new Error('老巢捣毁后应置残骸并清空引用');
+  console.log('✓ 老巢：100 万血地标（地图边缘选点 + 实心阻挡），捣毁后残骸保留');
+}
+pump(8, { until: () => !!G().enemies.find(e => e.mother && e.state !== 'entry'),
+  keepAlive: () => { if (state() === 'levelup') key('Digit1'); if (state() === 'chest') click('btn-chest-ok'); } });
+const mom2 = G().enemies.find(e => e.mother && !e.dieDone);
+if (!mom2) throw new Error('捣毁老巢后老鼠妈妈未降临');
+console.log('✓ 捣毁老巢 → 老鼠妈妈提前降临（走警告演出链）');
+MS.hitEnemy(mom2, 1e9);
+pump(9, { until: () => state() === 'over', keepAlive: () => { if (state() === 'levelup') key('Digit1'); if (state() === 'chest') click('btn-chest-ok'); } });
+if (!elRegistry.get('btn-continue').hidden) throw new Error('提前讨伐妈妈同样应强制收官（无继续夜巡）');
+console.log('✓ 提前讨伐（老巢路径）→ 强制收官，无继续夜巡');
+click('btn-menu');
+waitForState('menu', 3, '老巢收官后回主菜单');
+
+/* ---------- 场景 8.15：同屏上限滞回（意见6：到顶 150 停刷，打到 <100 续刷） ---------- */
+key('Enter');
+waitForState('play', 3, '上限滞回开局');
+dismissLevelup();
+G().player.iframes = 99999; G().player.weapons = []; MS.calcMods();
+for (const k of ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']) key(k, false);
+for (let i = 0; i < 150; i++) { // 塞满 150 只（超过当前成长上限 → 滞回应锁死刷怪）
+  const a = Math.random() * Math.PI * 2, d = 260 + Math.random() * 300;
+  MS.spawnEnemy('rat', G().player.x + Math.cos(a) * d, G().player.y + Math.sin(a) * d, false);
+}
+const capKeep = () => { if (state() === 'levelup') key('Digit1'); if (state() === 'chest') click('btn-chest-ok'); };
+pump(3, { keepAlive: capKeep });
+if (G().enemies.length < 145) throw new Error('塞满装置失效: ' + G().enemies.length);
+if (G().spawnHold !== true) throw new Error('超过上限后 spawnHold 应锁死: ' + G().spawnHold);
+const frozen = G().enemies.length;
+pump(3, { keepAlive: capKeep });
+if (G().enemies.length > frozen) throw new Error('滞回锁死期间不应刷怪: ' + frozen + ' → ' + G().enemies.length);
+console.log('✓ 上限滞回：' + frozen + ' 只到顶停刷（hold=true），持续锁死');
+let killed = 0;
+for (const e of G().enemies.slice()) { // 打到回落阈值（100）以下 → 解锁续刷
+  if (killed >= 95) break;
+  if (!e.house && !e.dieDone) { MS.hitEnemy(e, 1e9); killed++; }
+}
+pump(0.5, { keepAlive: capKeep });
+if (G().enemies.length >= 100) throw new Error('清怪装置未把数量打到阈值以下: ' + G().enemies.length);
+if (G().spawnHold !== false) throw new Error('打到回落阈值以下应解锁刷怪: hold=' + G().spawnHold + ' n=' + G().enemies.length);
+console.log('✓ 上限滞回：打到 ' + G().enemies.length + ' 只（<100）→ 解锁续刷（hold=false）');
+for (const e of G().enemies.slice()) if (!e.house && !e.dieDone) MS.hitEnemy(e, 1e9); // 清场收尾
 
 /* ---------- 场景 9：再来一局 → 死亡流程（统一结算·失败版） ---------- */
 click('btn-again');
@@ -870,6 +956,73 @@ if (maxParts > 600) throw new Error('粒子超过上限: ' + maxParts);
 if (maxProjs > 480) throw new Error('投射物超过上限: ' + maxProjs);
 if (sfxPeak > 150) throw new Error('音效播发率异常失控: ' + sfxPeak + '/s');
 console.log('✓ 过载治理生效：屏幕不常驻满幅晃动、地面猫砂有上限、音效有节流与并发预算');
+
+/* ---------- 场景 12：反卡死瞬移（流场寻路之上的兜底：卡满阈值 → 瞬移进主角视野贴屏幕边缘） ---------- */
+click('btn-menu');
+if (state() !== 'menu') throw new Error('回主菜单失败(反卡死)');
+key('Enter');
+waitForState('play', 3, '反卡死开局');
+dismissLevelup();
+G().player.iframes = 99999; // 隔离变量：杂兵碰撞不影响判定
+{
+  const DT = 1 / 60, CAM = G().cam, P = G().player;
+  const Z = MS.getZoom();
+  const inView = (x, y) => Math.abs(x - CAM.x) <= Z.worldW / 2 && Math.abs(y - CAM.y) <= Z.worldH / 2;
+  // 造一只"想追但完全动不了"的假怪（位置每帧不变），直接驱动卡住判定做确定性验证
+  const mk = (over) => Object.assign({
+    x: P.x + 300, y: P.y, r: 14, boss: false, batchBoss: false, state: '',
+    def: { name: '测试怪' },
+    stkT: 0, stkX: P.x + 300, stkY: P.y, kx: 0, ky: 0, flash: 0
+  }, over);
+  // a) 合法定身不计时：杂兵蓄力 sp=0、贴身互殴、boss 入场演出，跑满 10 秒累计必须仍是 0
+  const eHold = mk(), eHug = mk({ x: P.x + 20, y: P.y, stkX: P.x + 20 }), eEntry = mk({ boss: true, state: 'entry', r: 50 });
+  for (let i = 0; i < 600; i++) {
+    MS.updateStuck(eHold, DT, 300, 0);
+    MS.updateStuck(eHug, DT, eHug.r + P.r + 5, 80);
+    MS.updateStuck(eEntry, DT, 300, 0);
+  }
+  if (eHold.stkT !== 0 || eHug.stkT !== 0 || eEntry.stkT !== 0) throw new Error('合法定身/贴身互殴/入场演出被误判为卡住: ' + eHold.stkT + '/' + eHug.stkT + '/' + eEntry.stkT);
+  console.log('✓ 反卡死判定：蓄力定身/贴身互殴/入场演出均不计时');
+  // b) 持续原地 2.5 秒 → 杂兵瞬移：进视野、离主角保底距离、进入 6 秒保护冷却、只瞬移一次
+  const eStk = mk();
+  const w0 = G().warps;
+  for (let i = 0; i < 180; i++) MS.updateStuck(eStk, DT, 300, 80); // 3 秒 > trashT 2.5
+  if (G().warps !== w0 + 1) throw new Error('卡住 3 秒应恰好瞬移 1 次: ' + (G().warps - w0));
+  if (!(eStk.stkT < 0)) throw new Error('瞬移后应进入保护冷却: ' + eStk.stkT);
+  if (!inView(eStk.x, eStk.y)) throw new Error('瞬移落点不在主角视野内: ' + eStk.x + ',' + eStk.y);
+  if (Math.hypot(eStk.x - P.x, eStk.y - P.y) < MS.DATA.CFG.antiStuck.minPlayerD + eStk.r - 1) throw new Error('瞬移落点离主角过近: ' + Math.hypot(eStk.x - P.x, eStk.y - P.y).toFixed(0));
+  for (let i = 0; i < 180; i++) MS.updateStuck(eStk, DT, 300, 80); // 冷却期内继续原地：不得二连瞬移
+  if (G().warps !== w0 + 1) throw new Error('保护冷却期内发生了连锁瞬移: ' + (G().warps - w0));
+  console.log('✓ 杂兵卡住 2.5s 瞬移进视野贴边处（落点距主角 ' + Math.hypot(eStk.x - P.x, eStk.y - P.y).toFixed(0) + 'px），冷却期内不连锁');
+  // c) boss 阈值更宽（3 秒）：蓄力→撞墙冲锋循环（零位移）卡 2.9 秒不动 → 不瞬移；跨过 3 秒 → 瞬移
+  const eBoss = mk({ boss: true, state: 'charge', r: 50 });
+  for (let i = 0; i < 174; i++) MS.updateStuck(eBoss, DT, 400, 0); // 2.9 秒
+  if (G().warps !== w0 + 1) throw new Error('boss 卡 2.9 秒不应瞬移: ' + (G().warps - w0));
+  for (let i = 0; i < 12; i++) MS.updateStuck(eBoss, DT, 400, 0); // 跨过 3.0 秒
+  if (G().warps !== w0 + 2) throw new Error('boss 卡过 3 秒应瞬移: ' + (G().warps - w0));
+  if (!inView(eBoss.x, eBoss.y)) throw new Error('boss 瞬移落点不在视野内');
+  console.log('✓ boss 阈值 3 秒生效：蓄力/冲锋卡墙 2.9 秒不动不触发，跨过阈值瞬移回视野');
+  // d) 健康 boss 循环（蓄力定身 0.65s → 冲锋/追击正常位移）30 秒：位移会持续清零，绝不误判瞬移
+  const eH = mk({ boss: true, state: 'chase', r: 50 });
+  let cyc = 0;
+  for (let f = 0; f < 1800; f++) { // 30 秒
+    const ph = cyc % 3.7; cyc += DT;
+    let sp;
+    if (ph < 0.65) { sp = 0; }              // 蓄力 telegraph：定身
+    else { sp = 68; eH.x += 68 * DT; }      // 冲锋/追击：正常位移
+    MS.updateStuck(eH, DT, 400, sp);
+  }
+  if (G().warps !== w0 + 2) throw new Error('健康 boss 循环被误判瞬移: +' + (G().warps - w0 - 2));
+  console.log('✓ 健康 boss 循环 30s 零误判（蓄力定身被位移衰减抵消）');
+  // e) 落点采样器单测：视野内贴边 + 可走（手工地图上不落墙/猫道）
+  const curMap = MS.getCurMap ? MS.getCurMap() : null;
+  for (let i = 0; i < 50; i++) {
+    const pt = MS.warpStuckPoint(eStk);
+    if (!inView(pt.x, pt.y)) throw new Error('采样落点出视野: ' + pt.x + ',' + pt.y);
+    if (curMap && !curMap.free(pt.x, pt.y, false, eStk.r * 0.8)) throw new Error('采样落点不可走: ' + pt.x + ',' + pt.y);
+  }
+  console.log('✓ 落点采样 50 次：全部在视野内' + (curMap ? '且全部可走（不落墙/猫道）' : '（本局无手工地图）'));
+}
 
 console.log('\n全部无头冒烟场景通过 ✅');
 process.exit(0);

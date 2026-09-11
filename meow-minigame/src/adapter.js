@@ -193,9 +193,9 @@
     if (typeof CustomEvent === 'undefined') {
       defGlobal('CustomEvent', function (type, opts) { this.type = type; this.detail = opts && opts.detail; });
     }
-    /* 安全 title 写入器：art_pixel（复制品经 sync 脱敏后）经此写 document.title——
-       锁死宿主（开发者工具嵌入式页面 title 只读）上静默忽略，不再炸像素管线 */
-    defGlobal('__setDocTitle', v => { try { document.title = String(v); } catch (e) { /* 只读宿主忽略 */ } });
+    /* 安全 title 写入器：完全空操作。小游戏无 document.title 概念，
+       art_pixel 的调试赋值（经 sync 脱敏到此函数）不需要真正写入任何地方 */
+    defGlobal('__setDocTitle', function () { /* no-op */ });
     /* 像素素材就绪门：fork 版 main.js 保留与 H5 一致的 __PIXEL_GATE 启动门；
        5s 兜底防素材异常卡启动（art_pixel 失败路径也会派发就绪事件）。
        gate 同时挂 win 与 GameGlobal：真机 window===win，开发者工具 window 被锁则走 pin 路径。
@@ -207,6 +207,21 @@
     });
     win.__PIXEL_GATE = pixelGate;
     defGlobal('__PIXEL_GATE', pixelGate);
+    /* 重力感应：倾斜手机控制角色移动（与触摸摇杆共存，不触摸时生效） */
+    try {
+      if (wx.startAccelerometer) {
+        wx.startAccelerometer({ interval: 'game' });
+        const tiltDead = 0.15, tiltMax = 0.85;
+        const norm = v => {
+          const a = Math.abs(v);
+          return a <= tiltDead ? 0 : Math.sign(v) * Math.min(1, (a - tiltDead) / (tiltMax - tiltDead));
+        };
+        wx.onAccelerometerChange(res => {
+          /* 横屏轴映射：设备竖握 y 轴→横屏水平，x 轴→横屏竖直（符号可真机微调） */
+          g.__TILT = { x: norm(-res.y), y: norm(res.x) };
+        });
+      }
+    } catch (e) { /* 加速计不可用时静默（老设备） */ }
     /* 像素字体：内置 Fusion Pixel 子集。wx.loadFont 注册后返回字体家族名——
        tools_font.py 已把子集字体的家族名统一改写为 "Fusion Pixel"，与游戏内
        所有 '"Fusion Pixel",...' 字体栈精确命中（勿单独改动家族名，改请同步 tools_font.py） */

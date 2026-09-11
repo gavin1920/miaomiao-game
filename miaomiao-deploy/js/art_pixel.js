@@ -103,7 +103,11 @@
 
     /* ---- 道具/图标 ---- */
     Art.items = Art.items || {};
-    for (const [k, p] of Object.entries(M.items || {})) Art.items[k] = await frame(p, 2);
+    // 地面掉落显示倍率：经验小鱼干维持 2x；金币/牛奶/烟花/磁铁是高价值道具，
+    // 真机小屏（1X 视野优先）下 2x 太小看不清，统一 3x（20260911 试玩反馈）；
+    // 宝箱是最稀有奖励，3x 保持「宝箱 > 一切散落道具」的视觉层级（开箱演出按显式尺寸绘制，不受影响）
+    const ITEM_SCALE = { coin: 3, milk: 3, firework: 3, vacuum: 3, chestClosed: 3, chestOpen: 3 };
+    for (const [k, p] of Object.entries(M.items || {})) Art.items[k] = await frame(p, ITEM_SCALE[k] || 2);
     Art.icons = Art.icons || {};
     for (const [k, p] of Object.entries(M.icons || {})) Art.icons[k] = await frame(p, 2);
     const pawFallback = await (async () => { const p = M.icons && M.icons.paw ? await get(M.icons.paw) : null; return p ? bake(p, 2) : canvas2(112, 112); })();

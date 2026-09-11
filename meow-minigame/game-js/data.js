@@ -14,6 +14,7 @@ const DATA = (() => {
         dmgPerMin: 0.045, spdPerMin: 0.012, spdMax: 1.28, capBase: 38, capPerMin: 16.5, capMax: 265,
         spawnBase: 1.05, spawnPerMin: 0.055, spawnMin: 0.24, batchPerMin: 2.2, despawnR: 1.6,
         countRoundMul: 2, countHardMax: 480, countBatchPerTick: 64,
+        screenCap: 150, capResume: 100,
         roundHpMul: 3, roundDmgMul: 2, roundSpdMul: 1.1 },
       // 70 级后成长规则：autoFrom 级起升级自动+属性；chestOnlyFrom 级起只能靠宝箱升级
       postLevel: { autoFrom: 70, chestOnlyFrom: 80, hpPerLv: 0.02, spdPerLv: 0.01 },
@@ -31,8 +32,15 @@ const DATA = (() => {
         steal:  { radius: 250, keep: 170, eatR: 22 },
         slime:  { gap: 0.55, life: 2.8, r: 15, slow: 0.55, max: 70 }
       },
+      // 反卡死兜底（流场寻路之上的最后一道保险）：想追却持续原地累计满阈值 → 瞬移进主角视野贴屏幕边缘
+      antiStuck: {
+        trashT: 2.5, bossT: 3.0, frac: 0.25, engageR: 26,
+        reWarpCd: 6, warpStun: 1.2, edgeInset: 56, minPlayerD: 190, samples: 24
+      },
+      // 老鼠妈妈的老巢（意见10）：每张手工地图边缘一座，捣毁后妈妈提前降临
+      motherHouse: { hp: 1000000, r: 48, gold: 50 },
       rounds: {
-        parTime: 900, batchCount: 4, bossFrac: 0.72, dynamicStartRound: 2,
+        parTime: 900, batchCount: 4, bossFrac: 0.72, dynamicStartRound: 2, motherEndsRun: true,
         batchBossTypes: ['goose', 'raccoon', 'bulldog', 'calico'],
         batchBossHpFracs: [0.07, 0.13, 0.25, 0.45],
         batchBossScale: 1.85,

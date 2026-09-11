@@ -19,6 +19,10 @@ const Art = (() => {
   function bake2(w, h, fn) {
     return bake(w * 2, h * 2, x => { x.scale(2, 2); fn(x, w, h); });
   }
+  // 放大烘焙：把 ow×oh 的旧画法等比放大 k 倍居中画进 w×h（掉落物加大字号用，20260911 反馈）
+  function bigger(w, h, k, ow, oh, fn) {
+    return bake2(w, h, x => { x.translate(w / 2, h / 2); x.scale(k, k); x.translate(-ow / 2, -oh / 2); fn(x, ow, oh); });
+  }
   function whiteVersion(c) {
     return bake(c.width, c.height, x => {
       x.drawImage(c, 0, 0);
@@ -853,7 +857,8 @@ const Art = (() => {
     x.restore();
   }
   const items = {
-    gem1: bake2(44, 36, x => { x.translate(24, 19); x.rotate(-0.35); fish(x, '#cfe0f2', '#9db8d4', 0.85, '#aebfd6'); }),
+    // 经验三色鱼干：绿=小怪 蓝=精英 金=头目（最小一档曾用灰白，真机上被看成"小圆点"，20260911 反馈改绿）
+    gem1: bake2(44, 36, x => { x.translate(24, 19); x.rotate(-0.35); fish(x, '#76c474', '#3a8642', 0.85, '#56a45a'); }),
     gem2: bake2(48, 40, x => { x.translate(26, 21); x.rotate(-0.35); fish(x, '#6fb7ff', '#3f80dd', 0.98, '#4d90e8'); }),
     gem3: bake2(54, 44, x => {
       x.translate(28, 23); x.rotate(-0.35); fish(x, '#ffd34d', '#ef9c2e', 1.18, '#eda93c');
@@ -863,7 +868,7 @@ const Art = (() => {
       for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2; x.lineTo(Math.cos(a) * 5, Math.sin(a) * 5); x.lineTo(Math.cos(a + 0.5) * 1.8, Math.sin(a + 0.5) * 1.8); }
       x.closePath(); x.fill(); x.restore();
     }),
-    coin: bake2(36, 36, x => {
+    coin: bigger(50, 50, 1.4, 36, 36, x => {
       circ(x, 18, 18, 13.5, lg(x, 0, 4, 0, 32, [[0, '#ffe488'], [1, '#f0a13c']]), '#c07f1e', 3);
       circ(x, 18, 18, 9.5, '#ffedb0');
       // 猫爪浮雕
@@ -872,7 +877,7 @@ const Art = (() => {
       circ(x, 13.4, 15.4, 1.6, '#e8a83c'); circ(x, 17.4, 13.8, 1.6, '#e8a83c'); circ(x, 22.6, 15.4, 1.6, '#e8a83c');
       shine(x, 13, 11, 3.4, 2, -0.5);
     }),
-    milk: bake2(40, 44, x => {
+    milk: bigger(56, 62, 1.4, 40, 44, x => {
       x.translate(20, 23);
       x.beginPath(); x.moveTo(-9, -8); x.lineTo(9, -8); x.lineTo(13, -17); x.lineTo(-13, -17); x.closePath();
       x.fillStyle = '#7fc3ea'; x.fill(); x.lineWidth = 2.8; x.strokeStyle = OUT; x.stroke();
@@ -882,7 +887,7 @@ const Art = (() => {
       blush(x, -4.4, 7.4, 1.8); blush(x, 4.4, 7.4, 1.8);
       shine(x, -6, -3, 2.4, 5, 0);
     }),
-    firework: bake2(40, 46, x => {
+    firework: bigger(54, 60, 1.3, 40, 46, x => {
       x.translate(20, 25);
       blob(x, x2 => { x2.moveTo(-6.5, 12); x2.lineTo(0, -13); x2.lineTo(6.5, 12); x2.closePath(); },
         lg(x, 0, -13, 0, 12, [[0, '#ff8ba0'], [1, '#f0506b']]), { ow: 2.8 });
@@ -891,18 +896,27 @@ const Art = (() => {
       strokePath(x, c => { c.moveTo(6.5, 12); c.quadraticCurveTo(9.5, 17, 6.5, 21); }, '#8a6236', 2.4);
       circ(x, 0, 0, 1.8, '#ffe9a0'); circ(x, -2.4, 6, 1.4, '#ffd9e6');
     }),
-    vacuum: bake2(44, 40, x => {
-      x.translate(22, 20); x.rotate(0.5);
+    // 马蹄磁铁（吸走全场鱼干+金币的道具）：旧画法是"红拱门+白脚"，真机上被认成紫色小袋子（20260911 反馈）——
+    // 重画成 ∪ 形马蹄磁铁，白色磁极指向右上，极间夹一条被吸住的小鱼干，与被动「磁铁鱼」图标同款语言
+    vacuum: bake2(56, 52, x => {
+      groundShadow(x, 28, 48, 17, 3.5);
+      x.translate(28, 29); x.rotate(0.55); x.scale(1.12, 1.12);
+      const R = 11, T = 5.6, TOP = -15;
+      blob(x, c => {
+        c.moveTo(-R, TOP); c.lineTo(-R, 0);
+        c.arc(0, 0, R, Math.PI, 0, true);
+        c.lineTo(R, TOP); c.lineTo(R - T, TOP); c.lineTo(R - T, 0);
+        c.arc(0, 0, R - T, 0, Math.PI, false);
+        c.lineTo(-(R - T), TOP); c.closePath();
+      }, lg(x, 0, TOP, 0, 13, [[0, '#ff9494'], [1, '#e05656']]), { ow: 3 });
+      rr(x, -R, TOP - 1, T, 7.5, 2); x.fillStyle = '#eef2f8'; x.fill(); x.lineWidth = 2.2; x.strokeStyle = OUT; x.stroke();
+      rr(x, R - T, TOP - 1, T, 7.5, 2); x.fillStyle = '#eef2f8'; x.fill(); x.lineWidth = 2.2; x.strokeStyle = OUT; x.stroke();
+      x.save(); x.translate(0, -11.5); fish(x, '#ffd34d', '#ef9c2e', 0.72, '#eda93c'); x.restore();
+      shine(x, -R + 3, -3, 2, 4.2, 0);
+      x.save(); x.translate(15, -12); x.fillStyle = '#fff';
       x.beginPath();
-      x.arc(0, 0, 11, Math.PI, 0, false);
-      x.lineTo(11, 8); x.lineTo(5, 8); x.lineTo(5, 0);
-      x.arc(0, 0, 5, 0, Math.PI, true);
-      x.lineTo(-11, 8); x.lineTo(-5, 8); x.closePath();
-      x.fillStyle = lg(x, 0, -11, 0, 8, [[0, '#ff9db0'], [1, '#f0506b']]);
-      x.fill(); x.lineWidth = 2.8; x.strokeStyle = OUT; x.stroke();
-      x.fillStyle = '#fff';
-      x.fillRect(-11, 6, 6, 5); x.fillRect(5, 6, 6, 5);
-      shine(x, -4, -7, 3.4, 2, -0.4);
+      for (let i = 0; i < 4; i++) { const a = i * Math.PI / 2; x.lineTo(Math.cos(a) * 4, Math.sin(a) * 4); x.lineTo(Math.cos(a + 0.5) * 1.5, Math.sin(a + 0.5) * 1.5); }
+      x.closePath(); x.fill(); x.restore();
     }),
     chestClosed: bake2(72, 60, x => {
       groundShadow(x, 36, 57, 26, 5);

@@ -10,15 +10,19 @@ meow-minigame/
 ├── game.js               # 小游戏入口（require bundle + 分享能力）
 ├── game.json             # 小游戏配置（横屏）
 ├── project.config.json   # 开发者工具工程配置（appid：测试号 wxfef91db419d837bc，正式提审也用它）
-├── bundle.js             # 打包产物：adapter + 引擎 + UI + main 按浏览器 script 语义拼接
+│                         # 含 cloudfunctionRoot: cloudfunctions/（🏆排行榜云函数）
+├── cloudfunctions/       # 🏆 云端排行榜云函数（lb_top / lb_submit / cloudbase_auth，
+│                         #   右键「上传并部署：云端安装依赖」；方案见 miaomiao-deploy/docs/排行榜云开发方案.md）
+├── bundle.js             # 打包产物：adapter + 引擎 + LB + UI + main 按浏览器 script 语义拼接
 ├── src/
 │   ├── adapter.js        # wx→DOM/BOM 适配层（window/document/canvas/localStorage/WebAudio/触摸桥）
-│   ├── ui.js             # 纯 Canvas UI 层（主菜单/三选一/宝箱/暂停/结算/帮助/更新日志/HUD 按钮）
+│   ├── ui.js             # 纯 Canvas UI 层（主菜单/三选一/宝箱/暂停/结算/帮助/更新日志/🏆排行榜/HUD 按钮）
 │   └── main.js           # 游戏主程序（由 tools_transform.py 从 miaomiao-deploy/js/main.js 自动生成）
 ├── tools_transform.py    # fork 生成器：网页版 main.js → 去 DOM 化的小游戏版（改网页版后重跑）
-├── game-js/              # 同步来的引擎文件（util/audio/art/maps/game_config/data/result/changelog）
+├── game-js/              # 同步来的引擎文件（util/audio/art/maps/game_config/data/result/changelog/leaderboard）
 ├── assets/meow/          # 猫叫采样（适配层用 FileSystemManager 读取）
 └── test/                 # 浏览器冒烟测试（wx 桩 + 手动泵帧，不进小游戏包）
+                          # 另有无头测试：node test/headless-bundle-test.js（IN_WX 真实分支，不依赖开发者工具）
 ```
 
 引擎文件（game-js/）与 bundle.js 由同步脚本生成，**不要手改**：
@@ -65,7 +69,10 @@ bash /c/Users/gavin/Desktop/Games/miaomiao-deploy/tools/sync-minigame.sh
   浏览器桩 ?wx=1 真实分支冒烟零报错。建议 iOS + 安卓真机各回归一轮）。
 - 小程序后台配置：用户隐私保护指引（含"相册（仅写入）"，供保存战报用）、
   游戏资质（软著/电子版权认证或承诺制通道）、体验成员名单。
-- 开放数据域好友排行榜（P2 阶段）。
+- 🏆 云端排行榜已实现（云开发双端互通，代码在 `js/leaderboard.js` + `cloudfunctions/`），
+  **上线前需按 docs/排行榜云开发方案.md 开通云开发并填 ENV_ID**（测试号不能开云开发）；
+  未配置时自动降级为「暂未开启」+ 本地最佳纪录，不影响上线。
+- 开放数据域好友排行榜（P2 备选：好友榜免费但无法与网页端互通，可作现有云端榜的补充）。
 
 ## 已知问题（体验版观察项）
 
@@ -78,6 +85,8 @@ bash /c/Users/gavin/Desktop/Games/miaomiao-deploy/tools/sync-minigame.sh
   界面仍是平滑矢量风，多半是 imageSmoothingEnabled 在该机型不生效——反馈截图即可。
 - v3 虚拟视口：游戏恒按 720p 设计基准作画，适配层等比贴到物理屏（解决开发者工具
   window 锁死导致的 2x 裁切）。折叠屏/分屏改变纵横比后需重启小游戏（暂无 onWindowResize 桥）。
+- 重力感应：倾斜手机控制角色移动（与触摸摇杆共存，不触摸时生效）。轴映射在 adapter.js
+  `wx.onAccelerometerChange` 回调中定义，真机测试后可能需微调符号/死区。
 
 ## 发布素材（store/）
 
@@ -91,6 +100,8 @@ bash /c/Users/gavin/Desktop/Games/miaomiao-deploy/tools/sync-minigame.sh
 网页版 `js/main.js` 改动后只需重跑 `sync-minigame.sh`；**网页版若改了 UI 交互结构**
 （如新增面板），需要同步修改 `src/ui.js` 与 `tools_transform.py` 的对应转换规则。
 引擎数值/玩法逻辑在 `game-js/` 里永远是网页版原文件，不维护两份。
+🏆 排行榜的云配置（ENV_ID/RESOURCE_APPID）在网页版 `js/leaderboard.js` 顶部改，
+改完重跑 sync 两端同步生效。
 
 ⚠️ `project.config.json` 的 `setting.es6` 必须保持 **true**：关闭后预览/上传的编译管线
 会因 bundle 里的 `??` 等新语法直接报 SyntaxError（模拟器用的是本地 Chromium，不会暴露此问题）。
